@@ -12,9 +12,16 @@
 
 ## What is aina?
 
-**aina** is derived from **AI 4 aNAlog** (spelt and pronounced as *aa-ee-nah*). 
+**aina** (pronounced **aa-ee-nah**) is a domain portmanteau created directly from **AI 4 aNAlog**:
 
-In Eastern philosophy and languages (*آئینہ / आईना*), **aina** translates to **"mirror"** — an intentional homage to the foundational building block of analog integrated circuit design: the *analog current mirror*. Just as a mirror reflects reality with precision, **aina** reflects real SPICE physics, layout parasitics, and device non-linearities directly back into an autonomous agent's reasoning loop.
+$$\mathbf{\text{AI}} + \text{a}\mathbf{\text{NA}}\text{log} \implies \mathbf{\text{aina}}$$
+
+- **`AI`** — The first two letters from **AI** (Artificial Intelligence & autonomous agents).
+- **`NA`** — Taken directly from the core of a**NA**log circuits.
+
+Together, **aina** represents the fusion of autonomous intelligence with the nuanced art of analog transistor sizing.
+
+> **The Analog "Mirror":** In Eastern languages (*آئینہ / आईना*), *aina* also translates to **"mirror"** — an intentional homage to the foundational building block of all analog IC design: the **analog current mirror**. Just as a mirror reflects physical reality without distortion, **aina** reflects closed-loop SPICE simulation results, layout parasitics, and device non-linearities directly back into the LLM's reasoning engine.
 
 ### The Problem: Why Analog Sizing Needs Agentic AI
 
