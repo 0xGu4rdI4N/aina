@@ -67,7 +67,7 @@ EVALUATE_DESIGN_TOOL = {
             "Physics: Gm = Kp*(W/L)*Vov, |Av| = Gm*Rout, C_para = W * 1.5 fF. "
             "Larger W increases Gm (good) but also C_para (bad — rolls off gain). "
             "Shorter L increases W/L ratio and hence Gm, but raises Gds. "
-            "Target: gain >= 20 dB."
+            "Target: gain >= 30 dB."
         ),
         "parameters": {
             "type":     "object",
@@ -90,9 +90,14 @@ EVALUATE_DESIGN_TOOL = {
 # System prompt
 # ---------------------------------------------------------------------------
 
-SYSTEM_PROMPT = """\
-You are aina (AI 4 aNAlog), an expert analog IC design assistant. Your task is to size
-the MOSFET in a Common-Source (CS) Amplifier to achieve voltage gain >= 20 dB.
+def build_system_prompt(target_gain: float) -> str:
+    """Builds a physics-grounded system prompt tailored to the specified target gain."""
+    target_av = 10.0 ** (target_gain / 20.0)
+    estimated_wl = (target_av / 9500.0) / 36e-6
+
+    return f"""\
+You are aina, an expert analog IC design assistant. Your task is to size
+the MOSFET in a Common-Source (CS) Amplifier to achieve voltage gain >= {target_gain:.1f} dB.
 
 CIRCUIT (matches the SPICE netlist exactly):
   Topology : nMOS CS amp, Rd = 10 kOhm, Vdd = 3.3 V, Vbias = 1.0 V
@@ -104,27 +109,25 @@ KEY EQUATIONS:
   Gm     = Kp * (W/L) * Vov = 120e-6 * (W/L) * 0.3 = 36e-6 * (W/L)   [A/V]
   Id     = 0.5 * Kp * (W/L) * Vov^2 = 5.4e-6 * (W/L)                  [A]
   Gds    = lambda * Id = 0.02 * Id                                       [A/V]
-  Rout   = Rd || (1/Gds)  ~  9.5 to 10 kOhm for typical W/L
+  Rout   = Rd || (1/Gds)  ~  9.0 to 10.0 kOhm depending on W/L
   |Av|   = Gm * Rout  (DC gain magnitude)
 
 DESIGN SPACE:
   W : 1.0 to 50.0 um
   L : 0.5 to 10.0 um
-  Target: gain >= 20 dB  (i.e. |Av| >= 10)
+  Target: gain >= {target_gain:.1f} dB  (i.e. |Av| >= {target_av:.2f})
 
 STRATEGY:
-  1. Need Gm * Rout >= 10.  With Rout ~ 9.7k: Gm >= 1.03 mA/V.
-  2. Gm = 36e-6 * (W/L).  For Gm = 1 mA/V: W/L >= 27.8.
-     Examples that work: W=28,L=1  |  W=18,L=0.5  |  W=30,L=1  |  W=15,L=0.5.
-  3. Larger W raises C_para (fF = W*1.5) but at low frequencies (1 Hz) its
-     effect on gain is negligible -- the main gain lever is W/L ratio.
-  4. Very large L reduces Gm (bad) and ro (slightly better Rout), net effect
-     is usually lower gain. Prefer short L (0.5-1.5 um) for high Gm.
+  1. Target condition: Gm * Rout >= {target_av:.2f}.
+  2. With Rout ~ 9.5 kOhm: estimated W/L >= {estimated_wl:.1f}.
+  3. Larger W raises C_para (fF = W*1.5). Prefer keeping L near minimum (0.5 um)
+     to maximize W/L without excessive W and parasitic capacitance.
+  4. LANGUAGE: Always formulate your reasoning and replies in English.
 
 RULES:
   - Call evaluate_design ONCE per response with your chosen (W, L).
   - After seeing the result, analyze the gap and adjust W/L accordingly.
-  - Once gain >= 20 dB, say exactly "Design Verified: Goal Reached" and stop.
+  - Once gain >= {target_gain:.1f} dB, say exactly "Design Verified: Goal Reached" and stop.
 """
 
 
@@ -191,14 +194,21 @@ class AgentBrain:
             self.model, self.max_iters, self.target_gain,
         )
 
-        self.messages.append({
-            "role":    "user",
-            "content": (
-                f"Begin sizing the CS amplifier. Target: gain >= {self.target_gain} dB. "
-                "Use the evaluate_design tool to simulate each candidate. "
-                "Start with your best initial guess based on the circuit equations."
-            ),
-        })
+        self.messages = [
+            {
+                "role": "system",
+                "content": build_system_prompt(self.target_gain),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Begin sizing the CS amplifier. Target: gain >= {self.target_gain:.1f} dB. "
+                    "Use the evaluate_design tool to simulate each candidate. "
+                    "Start with your best initial guess based on the circuit equations. "
+                    "Always write your reasoning and responses in English."
+                ),
+            },
+        ]
 
         for iteration in range(1, self.max_iters + 1):
             logger.info("── Iteration %d ──", iteration)
