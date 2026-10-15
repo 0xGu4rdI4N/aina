@@ -27,7 +27,7 @@ Together, **aina** represents the fusion of autonomous intelligence with the nua
 
 Digital VLSI design achieved full automated logic synthesis and place-and-route decades ago. In contrast, **analog IC design remains stubbornly manual**. Sizing transistor dimensions (Gate Width $W$ and Channel Length $L$) is a multi-objective balancing act fraught with non-linear trade-offs:
 
-1. **Transconductance vs. Parasitic Penalty:** Increasing width $W$ raises transconductance ($g_m \propto W/L$), boosting voltage gain. However, wider transistors incur an unavoidable **layout parasitic capacitance penalty** ($C_{parasitic} \approx 1.5 \times W\text{ fF}$) that degrades high-frequency response and bandwidth.
+1. **Transconductance vs. Parasitic Penalty:** Increasing width $W$ raises transconductance ($g_m \propto W/L$), boosting voltage gain. However, wider transistors incur an unavoidable **layout parasitic capacitance penalty** (`C_parasitic ≈ 1.5 × W fF`) that degrades high-frequency response and bandwidth.
 2. **Channel-Length Modulation:** Reducing length $L$ amplifies $W/L$, but degrades transistor output resistance $r_o$ due to channel-length modulation ($\lambda$).
 3. **Saturation Guarantees:** Naive numerical optimizers often wander blindly into the triode or cut-off regions, producing nonsensical small-signal gains.
 
@@ -37,11 +37,11 @@ Digital VLSI design achieved full automated logic synthesis and place-and-route 
 
 ## Gain Landscape & Agent Convergence
 
-Below is the small-signal voltage gain landscape computed across the $(W, L)$ design space, showing the non-linear trade-off, the target specification ($\ge 20\text{ dB}$), the layout parasitic capacitance $C_{para}$, and the live convergence trajectory taken by **aina**:
+Below is the small-signal voltage gain landscape computed across the $(W, L)$ design space, showing the non-linear trade-off, the target specification ($\ge 20\text{ dB}$), the layout parasitic capacitance (`C_para`), and the live convergence trajectory taken by **aina**:
 
 ![aina Gain Landscape and Agent Trajectory](assets/gain_landscape.png)
 
-- **Panel 1 (Left):** Voltage gain $|A_v|$ as a function of transistor width $W$ across channel lengths ($L = 0.5, 1.0, 1.5, 2.5\ \mu\text{m}$). The dotted grey line represents the increasing layout parasitic penalty ($C_{para}$). The green shaded band denotes the optimal sizing region where target gain is satisfied while minimizing layout capacitance.
+- **Panel 1 (Left):** Voltage gain $|A_v|$ as a function of transistor width $W$ across channel lengths ($L = 0.5, 1.0, 1.5, 2.5\ \mu\text{m}$). The dotted grey line represents the increasing layout parasitic penalty (`C_para`). The green shaded band denotes the optimal sizing region where target gain is satisfied while minimizing layout capacitance.
 - **Panel 2 (Right):** 2D contour map over $(W, L)$. The agent begins with an initial sizing guess $(W=10\ \mu\text{m}, L=0.5\ \mu\text{m})$ yielding $17.33\text{ dB}$, analyzes the shortfall, and converges to the sweet point $(W=20\ \mu\text{m}, L=0.5\ \mu\text{m})$ achieving **$22.99\text{ dB}$** in just 2 iterations.
 
 ---
@@ -77,15 +77,19 @@ The environment tests a classic NMOS Common-Source Amplifier with resistive load
 - **Technology:** Level-1 NMOS model ($K_p = 120\ \mu\text{A/V}^2$, $V_{to} = 0.7\text{ V}$, $\lambda = 0.02\text{ V}^{-1}$)
 - **Supply & Bias:** $V_{dd} = 3.3\text{ V}$, $V_{bias} = 1.0\text{ V} \implies V_{ov} = V_{gs} - V_{to} = 0.3\text{ V}$ (ensuring saturation across $W \in [1, 50]\ \mu\text{m}$)
 - **Load Resistor:** $R_d = 10\text{ k}\Omega$
-- **Parasitic Model:** $C_{parasitic}\text{ (fF)} = W\ (\mu\text{m}) \times 1.5$
-- **Small-Signal Equations:**
-  $$\begin{aligned}
-  I_d &= \frac{1}{2} K_p \left(\frac{W}{L}\right) V_{ov}^2 \\
-  g_m &= K_p \left(\frac{W}{L}\right) V_{ov} \\
-  r_o &= \frac{1}{\lambda I_d} \\
-  R_{out} &= R_d \parallel r_o \\
-  |A_v| &= g_m \cdot R_{out}
-  \end{aligned}$$
+- **Parasitic Model:** `C_parasitic (fF) = 1.5 × W (µm)`
+
+#### Small-Signal Equations
+
+```math
+\begin{aligned}
+I_d &= \frac{1}{2} K_p \left(\frac{W}{L}\right) V_{ov}^2 \\
+g_m &= K_p \left(\frac{W}{L}\right) V_{ov} \\
+r_o &= \frac{1}{\lambda I_d} \\
+R_{out} &= R_d \parallel r_o \\
+|A_v| &= g_m \cdot R_{out}
+\end{aligned}
+```
 
 ---
 
