@@ -1,6 +1,6 @@
 # aina (aa-ee-nah) 🔬⚡
 
-> **AI 4 aNAlog — Autonomous Agentic Transistor Sizing with Real-World SPICE Feedback**  
+> **AI**4a**NA**log — Autonomous Agentic Transistor Sizing with Real-World SPICE Feedback  
 > *Pronounced "aa-ee-nah"*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
@@ -12,16 +12,12 @@
 
 ## What is aina?
 
-**aina** (pronounced **aa-ee-nah**) is a domain portmanteau created directly from **AI 4 aNAlog**:
+**aina** (pronounced **aa-ee-nah**) is derived from **AI**4a**NA**log:
 
-$$\mathbf{\text{AI}} + \text{a}\mathbf{\text{NA}}\text{log} \implies \mathbf{\text{aina}}$$
+- **AI** — Artificial Intelligence
+- **NA** — a**NA**log
 
-- **`AI`** — The first two letters from **AI** (Artificial Intelligence & autonomous agents).
-- **`NA`** — Taken directly from the core of a**NA**log circuits.
-
-Together, **aina** represents the fusion of autonomous intelligence with the nuanced art of analog transistor sizing.
-
-> **The Analog "Mirror":** In Eastern languages (*آئینہ / आईना*), *aina* also translates to **"mirror"** — an intentional homage to the foundational building block of all analog IC design: the **analog current mirror**. Just as a mirror reflects physical reality without distortion, **aina** reflects closed-loop SPICE simulation results, layout parasitics, and device non-linearities directly back into the LLM's reasoning engine.
+> **The Analog "Mirror":** In Eastern languages (*آئینہ / आईना*), *aina* also translates to **"mirror"** — an intentional homage to the foundational building block of analog IC design: the **analog current mirror**. Just as a mirror reflects reality with precision, **aina** reflects closed-loop SPICE simulation results, layout parasitics, and device non-linearities directly back into the LLM's reasoning engine.
 
 ### The Problem: Why Analog Sizing Needs Agentic AI
 
@@ -100,7 +96,7 @@ Running **aina** locally with Ollama (`qwen2.5:7b`) and real **Ngspice-47**:
 ```text
   ╔══════════════════════════════════════════╗
   ║              aina  v1.0                  ║
-  ║   AI 4 aNAlog: Autonomous SPICE Sizing   ║
+  ║   AI4aNAlog: Autonomous SPICE Sizing     ║
   ╚══════════════════════════════════════════╝
 
   Target gain : >= 20.0 dB

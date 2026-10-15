@@ -160,7 +160,7 @@ def main() -> int:
     # ── Banner ────────────────────────────────────────────────────────────────
     print(_c("\n  ╔══════════════════════════════════════════╗", CYAN))
     print(_c("  ║              aina  v1.0                  ║", CYAN, BOLD))
-    print(_c("  ║   AI 4 aNAlog: Autonomous SPICE Sizing   ║", CYAN))
+    print(_c("  ║   AI4aNAlog: Autonomous SPICE Sizing     ║", CYAN))
     print(_c("  ╚══════════════════════════════════════════╝", CYAN))
     print(f"\n  Target gain : {_c(f'>= {args.target_gain:.1f} dB', BOLD, GREEN)}")
     print(f"  Max iters   : {_c(str(args.max_iters), BOLD)}")
