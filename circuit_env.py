@@ -21,6 +21,7 @@ import math
 import shutil
 import os
 import logging
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +113,8 @@ Cparasitic out 0 {C_para}f
 
 * AC analysis: 10 pts/decade, 1 Hz to 100 GHz
 .control
+  op
+  print v(out)
   ac dec 10 1 100G
   let gain_mag = db(v(out))
   print gain_mag[0]
@@ -177,8 +180,44 @@ Cparasitic out 0 {C_para}f
         return self._run_ngspice(w, l, parasitic_c)
 
     def _run_mock(self, w, l, parasitic_c) -> dict:
+        w_m = w * 1e-6
+        l_m = l * 1e-6
+        Kp = 120e-6
+        Vov = 0.3
+        Vdd = 3.3
+        Rd = 10e3
+
+        Id_sat = 0.5 * Kp * (w_m / l_m) * (Vov ** 2)
+        Vout_dc = Vdd - Id_sat * Rd
+
+        # Physics check: Headroom & saturation boundary
+        if Vout_dc < Vov:
+            gain = _mock_gain_db(w, l, parasitic_c)
+            return {
+                "status": "PHYSICS_VIOLATION",
+                "error_type": "TRIODE_REGION_HEADROOM_EXHAUSTED",
+                "vout_dc": round(Vout_dc, 3),
+                "gain": gain,
+                "parasitic": parasitic_c,
+                "diagnostic": (
+                    f"Transistor M1 has collapsed into the triode/linear region (Vds = {Vout_dc:.3f} V < Vov = 0.300 V). "
+                    f"The drain current Id causes an excessive voltage drop across Rd = 10 kΩ, exceeding the 3.3V supply rail."
+                ),
+                "suggested_action": (
+                    "Reduce gate width W or increase gate length L to decrease drain current Id, "
+                    "restoring Vds >= 0.3 V to maintain saturation amplification."
+                ),
+                "mode": "mock",
+            }
+
         gain = _mock_gain_db(w, l, parasitic_c)
-        return {"status": "SUCCESS", "gain": gain, "parasitic": parasitic_c, "mode": "mock"}
+        return {
+            "status": "SUCCESS",
+            "gain": gain,
+            "parasitic": parasitic_c,
+            "vout_dc": round(Vout_dc, 3),
+            "mode": "mock",
+        }
 
     def _run_ngspice(self, w, l, parasitic_c) -> dict:
         netlist      = self.NETLIST_TEMPLATE.format(W_val=w, L_val=l, C_para=parasitic_c)
@@ -196,36 +235,184 @@ Cparasitic out 0 {C_para}f
                 timeout=10,
             )
         except FileNotFoundError:
-            return {"status": "SIMULATION_FAILED", "error": "ngspice not found in PATH", "mode": "ngspice"}
+            return {
+                "status": "SIMULATION_FAILED",
+                "error_type": "NGSPICE_NOT_FOUND",
+                "diagnostic": "Ngspice binary was not found in PATH.",
+                "suggested_action": "Install ngspice or run with --mock flag.",
+                "mode": "ngspice",
+            }
         except subprocess.TimeoutExpired:
-            return {"status": "SIMULATION_FAILED", "error": "Ngspice timed out (>10 s)", "mode": "ngspice"}
+            return {
+                "status": "SIMULATION_FAILED",
+                "error_type": "SIMULATION_TIMEOUT",
+                "diagnostic": "Ngspice simulation timed out (>10 s).",
+                "suggested_action": "Circuit is experiencing severe numerical convergence hang. Step back to previous dimensions.",
+                "mode": "ngspice",
+            }
         except Exception as exc:
-            return {"status": "SIMULATION_FAILED", "error": str(exc), "mode": "ngspice"}
+            return {
+                "status": "SIMULATION_FAILED",
+                "error_type": "EXECUTION_EXCEPTION",
+                "diagnostic": str(exc),
+                "suggested_action": "Check system environment and permissions.",
+                "mode": "ngspice",
+            }
         finally:
             if os.path.exists(netlist_path):
                 os.remove(netlist_path)
 
         combined = result.stdout + result.stderr
 
-        # Primary: "gain_mag[0] = <value>"
-        match = re.search(
+        # 1. Parse DC Operating Point voltage at node out: v(out) = <val>
+        match_dc = re.search(
+            r'\bv\(out\)\s*=\s*([+-]?[0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?)',
+            combined, re.IGNORECASE,
+        )
+        vout_dc = float(match_dc.group(1)) if match_dc else None
+
+        # 2. Parse small-signal AC gain
+        match_gain = re.search(
             r'gain_mag\s*\[\s*0\s*\]\s*=\s*([+-]?[0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?)',
             combined, re.IGNORECASE,
         )
-        # Fallback: any "gain = <value>" or "gain[0] = <value>"
-        if not match:
-            match = re.search(
+        if not match_gain:
+            match_gain = re.search(
                 r'\bgain\b\s*(?:\[\s*\d+\s*\])?\s*=\s*([+-]?[0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?)',
                 combined, re.IGNORECASE,
             )
 
-        if match:
+        gain = round(float(match_gain.group(1)), 2) if match_gain else None
+
+        # 3. Check for physical headroom / triode collapse
+        if vout_dc is not None and vout_dc < 0.300:
+            diag = diagnose_spice_log(combined, vout_dc=vout_dc, gain=gain)
+            diag["mode"] = "ngspice"
+            diag["parasitic"] = parasitic_c
+            return diag
+
+        # 4. Check for normal valid amplification
+        if gain is not None and gain >= 0.0:
             return {
                 "status":    "SUCCESS",
-                "gain":      round(float(match.group(1)), 2),
+                "gain":      gain,
                 "parasitic": parasitic_c,
+                "vout_dc":   round(vout_dc, 3) if vout_dc is not None else None,
                 "mode":      "ngspice",
             }
 
-        logger.debug("Ngspice raw output:\n%s", combined)
-        return {"status": "PARSING_ERROR", "log": combined[:2000], "mode": "ngspice"}
+        # 5. Intercept SPICE convergence / numerical errors
+        diag = diagnose_spice_log(combined, vout_dc=vout_dc, gain=gain)
+        diag["mode"] = "ngspice"
+        diag["parasitic"] = parasitic_c
+        return diag
+
+
+# ---------------------------------------------------------------------------
+# SPICE Diagnostic Parser & Recovery Expert
+# ---------------------------------------------------------------------------
+
+def _extract_error_snippet(log_text: str) -> str:
+    """Extracts concise error lines from raw SPICE output."""
+    lines = [
+        line.strip()
+        for line in log_text.splitlines()
+        if line.strip() and not line.strip().startswith("Doing analysis")
+    ]
+    error_lines = [
+        l for l in lines
+        if any(k in l.lower() for k in ["error", "warning", "failed", "limit", "fatal", "singular"])
+    ]
+    if error_lines:
+        return " | ".join(error_lines[:3])
+    return " | ".join(lines[-3:]) if lines else "No diagnostic lines found."
+
+
+def diagnose_spice_log(
+    log_text: str,
+    vout_dc: Optional[float] = None,
+    gain: Optional[float] = None,
+) -> dict:
+    """
+    Classifies raw Ngspice stdout/stderr and returns structured diagnostic
+    metadata with specific recovery suggestions for the agent.
+    """
+    text_lower = log_text.lower()
+
+    # 1. Physics / Headroom check: Triode collapse
+    if vout_dc is not None and vout_dc < 0.300:
+        return {
+            "status": "PHYSICS_VIOLATION",
+            "error_type": "TRIODE_REGION_HEADROOM_EXHAUSTED",
+            "vout_dc": round(vout_dc, 3),
+            "gain": gain,
+            "diagnostic": (
+                f"Transistor M1 has collapsed into the triode/linear region (Vds = {vout_dc:.3f} V < Vov = 0.300 V). "
+                f"The drain current Id causes an excessive voltage drop across Rd = 10 kΩ, starving the output headroom."
+            ),
+            "suggested_action": (
+                "Reduce gate width W or increase gate length L to decrease drain current Id, "
+                "restoring Vds >= 0.3 V to maintain saturation amplification."
+            ),
+            "raw_log_snippet": _extract_error_snippet(log_text),
+        }
+
+    # 2. Timestep too small
+    if "timestep too small" in text_lower or "time step too small" in text_lower:
+        return {
+            "status": "SIMULATION_FAILED",
+            "error_type": "TIMESTEP_TOO_SMALL",
+            "diagnostic": "Transient/AC solver failed: Numerical timestep became too small to maintain integration stability.",
+            "suggested_action": "Avoid extreme parameter jumps or aspect ratios. Step dimensions more moderately.",
+            "raw_log_snippet": _extract_error_snippet(log_text),
+        }
+
+    # 3. Non-convergence
+    if any(k in text_lower for k in ["no convergence", "convergence failed", "iteration limit reached", "pseudo-transient failed"]):
+        return {
+            "status": "SIMULATION_FAILED",
+            "error_type": "CONVERGENCE_ERROR",
+            "diagnostic": "SPICE solver reached maximum iterations without finding an equilibrium operating point.",
+            "suggested_action": "The chosen (W, L) produces numerical instability. Step back to previous stable sizing.",
+            "raw_log_snippet": _extract_error_snippet(log_text),
+        }
+
+    # 4. Singular matrix / floating nodes
+    if "singular matrix" in text_lower or "matrix is singular" in text_lower:
+        return {
+            "status": "SIMULATION_FAILED",
+            "error_type": "SINGULAR_MATRIX",
+            "diagnostic": "Matrix inversion failed: Node impedance is infinite or Jacobian matrix is singular.",
+            "suggested_action": "Check transistor connections and avoid extreme boundary values.",
+            "raw_log_snippet": _extract_error_snippet(log_text),
+        }
+
+    # 5. Operating point failure
+    if "operating point failed" in text_lower or "op failed" in text_lower:
+        return {
+            "status": "SIMULATION_FAILED",
+            "error_type": "DC_OP_FAILED",
+            "diagnostic": "DC operating point calculation failed to settle.",
+            "suggested_action": "Device dimensions or bias conditions prevent DC bias settlement. Return to a known operating range.",
+            "raw_log_snippet": _extract_error_snippet(log_text),
+        }
+
+    # 6. Negative gain / attenuation
+    if gain is not None and gain < 0.0:
+        return {
+            "status": "PHYSICS_VIOLATION",
+            "error_type": "GAIN_ATTENUATION_HEADROOM_VIOLATION",
+            "gain": gain,
+            "diagnostic": f"Circuit produces negative gain ({gain:.2f} dB), indicating severe attenuation or improper biasing.",
+            "suggested_action": "The transistor is likely cut off or driven into triode. Reduce W/L ratio.",
+            "raw_log_snippet": _extract_error_snippet(log_text),
+        }
+
+    # Generic fallback error
+    return {
+        "status": "SIMULATION_FAILED",
+        "error_type": "UNCLASSIFIED_SIM_ERROR",
+        "diagnostic": f"Ngspice execution failed. Log snippet: {_extract_error_snippet(log_text)}",
+        "suggested_action": "Inspect netlist parameters and return to a safer operating point within valid bounds.",
+        "raw_log_snippet": _extract_error_snippet(log_text),
+    }

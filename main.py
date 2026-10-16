@@ -22,6 +22,7 @@ import textwrap
 
 from circuit_env import BasicCircuitEnv
 from agent_brain import AgentBrain, IterationResult
+from tracer import ObservabilityTracer
 
 # ---------------------------------------------------------------------------
 # Terminal colour helpers (no external deps — pure ANSI)
@@ -35,6 +36,7 @@ RED    = "\033[91m"
 CYAN   = "\033[96m"
 DIM    = "\033[2m"
 BLUE   = "\033[94m"
+MAGENTA= "\033[95m"
 
 
 def _c(text: str, *codes: str) -> str:
@@ -68,15 +70,38 @@ def _print_iteration(res: IterationResult, target: float) -> None:
     print(_bar())
 
     # Parameters chosen
-    print(f"  {'W':>10} = {_c(f'{res.w:.2f} um', BOLD)}")
-    print(f"  {'L':>10} = {_c(f'{res.l:.2f} um', BOLD)}")
+    w_over_l = (res.w / res.l) if res.l > 0 else 0.0
+    print(f"  {'W':>12} = {_c(f'{res.w:.2f} um', BOLD)}   {'L':>6} = {_c(f'{res.l:.2f} um', BOLD)}  (W/L = {w_over_l:.1f})")
 
     if res.sim_status == "SUCCESS":
-        print(f"  {'Gain':>10} = {_gain_colour(res.gain, target)}")
-        print(f"  {'C_para':>10} = {_c(f'{res.parasitic:.2f} fF', BOLD)}")
-        print(f"  {'Sim mode':>10} = {_c(res.sim_mode, DIM)}")
+        print(f"  {'Gain':>12} = {_gain_colour(res.gain, target)}")
+        print(f"  {'C_para':>12} = {_c(f'{res.parasitic:.2f} fF', BOLD)}")
+        if res.vout_dc is not None:
+            print(f"  {'Vout (DC)':>12} = {_c(f'{res.vout_dc:.3f} V', BOLD)} (Vds saturation >= 0.3V: {_c('PASS', GREEN)})")
+        print(f"  {'Sim mode':>12} = {_c(res.sim_mode, DIM)}")
     else:
-        print(f"  {'Status':>10} = {_c(res.sim_status, RED, BOLD)}")
+        status_color = RED if res.sim_status in ("SIMULATION_FAILED", "PARSING_ERROR") else YELLOW
+        print(f"  {'Status':>12} = {_c(res.sim_status, status_color, BOLD)}")
+        if res.error_type:
+            print(f"  {'Error Type':>12} = {_c(res.error_type, RED, BOLD)}")
+        if res.vout_dc is not None:
+            print(f"  {'Vout (DC)':>12} = {_c(f'{res.vout_dc:.3f} V', RED, BOLD)} (Vds < 0.3V -> {_c('TRIODE COLLAPSE', RED, BOLD)})")
+        if res.diagnostic:
+            print(f"\n  {_c('Diagnostic:', BOLD, RED)}")
+            diag_wrapped = textwrap.fill(res.diagnostic, width=64, initial_indent="    ", subsequent_indent="    ")
+            print(_c(diag_wrapped, RED))
+        if res.suggested_action:
+            print(f"\n  {_c('Recovery Hint:', BOLD, YELLOW)}")
+            rec_wrapped = textwrap.fill(res.suggested_action, width=64, initial_indent="    ", subsequent_indent="    ")
+            print(_c(rec_wrapped, YELLOW))
+
+    # Telemetry
+    if res.tokens and res.latency_ms is not None:
+        p_tok = res.tokens.get("prompt", 0)
+        c_tok = res.tokens.get("completion", 0)
+        tot_tok = res.tokens.get("total", p_tok + c_tok)
+        telemetry_str = f"Tokens: {tot_tok} ({p_tok} in / {c_tok} out) | Latency: {res.latency_ms/1000.0:.2f}s"
+        print(f"  {'Telemetry':>12} = {_c(telemetry_str, DIM, MAGENTA)}")
 
     # Agent reasoning (wrapped to 64 chars)
     if res.reasoning:
@@ -142,6 +167,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-iters",   type=int,   default=10,   metavar="N", help="Max agentic iterations")
     p.add_argument("--target-gain", type=float, default=20.0, metavar="G", help="Target gain in dB")
     p.add_argument("--model",       type=str,   default="qwen2.5:7b", help="Ollama LLM model name")
+    p.add_argument("--phoenix",     action="store_true",  help="Launch Arize Phoenix local observability UI & trace LLM calls")
+    p.add_argument("--trace-dir",   type=str,   default="traces", help="Directory to save structured JSONL telemetry logs")
     p.add_argument("--verbose",     action="store_true",  help="Enable debug logging")
     return p.parse_args()
 
@@ -166,6 +193,15 @@ def main() -> int:
     print(f"  Max iters   : {_c(str(args.max_iters), BOLD)}")
     print(f"  LLM model   : {_c(args.model, BOLD)}")
 
+    # ── Observability & Tracing ──────────────────────────────────────────────
+    tracer = ObservabilityTracer(
+        trace_dir=args.trace_dir,
+        enable_phoenix=args.phoenix,
+    )
+    print(f"  Trace file  : {_c(str(tracer.trace_file), DIM)}")
+    if tracer.phoenix_url:
+        print(f"  Phoenix UI  : {_c(tracer.phoenix_url, BOLD, CYAN)}")
+
     # ── Environment ───────────────────────────────────────────────────────────
     try:
         env = BasicCircuitEnv(use_mock=True if args.mock else None)
@@ -182,6 +218,7 @@ def main() -> int:
             max_iters   = args.max_iters,
             target_gain = args.target_gain,
             model       = args.model,
+            tracer      = tracer,
         )
     except EnvironmentError as exc:
         print(_c(f"\n  [ERROR] {exc}", RED, BOLD))
@@ -214,12 +251,16 @@ def main() -> int:
             traceback.print_exc()
         return 1
 
-    # ── Summary ───────────────────────────────────────────────────────────────
+    # ── Summary & Observability Telemetry ─────────────────────────────────────
+    solved = any(r.goal_reached for r in history)
     if history:
         _print_summary(history, args.target_gain)
 
-    return 0 if any(r.goal_reached for r in history) else 2
+    tracer.print_summary(solved=solved)
+
+    return 0 if solved else 2
 
 
 if __name__ == "__main__":
     sys.exit(main())
+

@@ -48,22 +48,23 @@ Below is the small-signal voltage gain landscape computed across the $(W, L)$ de
 ┌────────────────────────────────────────────────────────────────────────┐
 │                                main.py                                 │
 │                  Orchestrator — drives the agentic loop                │
-└───────────────────────────────────┬────────────────────────────────────┘
-                                    │ triggers
-                    ┌───────────────▼─────────────────┐
-                    │         agent_brain.py          │
-                    │   Ollama Local LLM (qwen2.5)    │
-                    │   • Analog IC System Prompt     │
-                    │   • evaluate_design Tool Schema │
-                    │   • Physics-grounded Reasoning  │
-                    └───────────────┬─────────────────┘
-                                    │ executes tool call
-                    ┌───────────────▼─────────────────┐
-                    │         circuit_env.py          │
-                    │   • Common-Source Amp Netlist   │
-                    │   • Layout Penalty: C = 1.5 * W │
-                    │   • Real Ngspice or Fast Mock   │
-                    └─────────────────────────────────┘
+└──────────────────────┬─────────────────────────┬───────────────────────┘
+                       │ triggers                │ logs telemetry
+       ┌───────────────▼─────────────────┐   ┌───▼───────────────────────────┐
+       │         agent_brain.py          │   │           tracer.py           │
+       │   Ollama Local LLM (qwen2.5)    │   │  • Structured JSONL Traces    │
+       │   • Analog IC System Prompt     │   │  • Arize Phoenix UI / OTel    │
+       │   • evaluate_design Tool Schema │   │  • Latency & Token Economics  │
+       │   • Physics-grounded Reasoning  │   └───▲───────────────────────────┘
+       └───────────────┬─────────────────┘       │ telemetry stream
+                       │ executes tool call      │
+       ┌───────────────▼─────────────────────────┴─┐
+       │              circuit_env.py               │
+       │   • Common-Source Amp Netlist             │
+       │   • Layout Penalty: C = 1.5 * W           │
+       │   • Real Ngspice or Fast Mock             │
+       │   • SPICE Error Interceptors & Triode Op  │
+       └───────────────────────────────────────────┘
 ```
 
 ### Circuit Physics & Netlist Specs
@@ -89,9 +90,30 @@ R_{out} &= R_d \parallel r_o \\
 
 ---
 
+## 🛡️ Agent Observability & Failure Recovery
+
+### 1. SPICE Error Handlers & Headroom Protection
+Real-world analog IC simulation is prone to numerical divergence and physical boundary collapses. Rather than treating SPICE crashes as fatal exceptions, **aina** intercepts simulation issues and synthesizes them into actionable diagnostic prompts for the agent:
+
+| Simulation Condition | Diagnostic Classification | Agent Recovery Guidance |
+|----------------------|---------------------------|-------------------------|
+| `Timestep too small` | `TIMESTEP_TOO_SMALL` | Adjust $(W, L)$ slightly away from numerical singularity |
+| `No convergence in DC op` | `CONVERGENCE_ERROR` | Re-center initial operating point |
+| `Matrix is singular` | `SINGULAR_MATRIX` | Check topology node impedances |
+| $V_{ds} < V_{ov} = 0.3\text{ V}$ | `TRIODE_REGION_HEADROOM_EXHAUSTED` | **Headroom Collapse:** $I_d \cdot R_d$ exceeds supply rails, driving MOSFET into triode. The agent is guided to reduce $W$ or increase $L$. |
+| $A_v < -20\text{ dB}$ (attenuation) | `GAIN_ATTENUATION_HEADROOM_VIOLATION` | Bias point collapsed; recover saturation voltage |
+
+### 2. Structured Observability Trace (Arize Phoenix & JSONL)
+**aina** features full production-grade observability:
+- **Telemetry per Iteration:** Prompt tokens, completion tokens, step latency, estimated cost ($0.00 for local Ollama), circuit parameters ($W$, $L$, $W/L$, $C_{para}$), DC operating point ($V_{out,DC}$), and reasoning snippets.
+- **Arize Phoenix Integration:** Launch local trace visualization via `--phoenix` to inspect step-by-step tool calls, LLM spans, and latency distributions in real time.
+- **Structured JSONL Logs:** Every run automatically serializes to `traces/run_<session_id>.jsonl` and updates `traces/latest.jsonl`.
+
+---
+
 ## Live Agent Execution Trace
 
-Running **aina** locally with Ollama (`qwen2.5:7b`) and real **Ngspice-47**:
+Running **aina** locally with Ollama (`qwen2.5:7b`) and structured telemetry:
 
 ```text
   ╔══════════════════════════════════════════╗
@@ -102,6 +124,7 @@ Running **aina** locally with Ollama (`qwen2.5:7b`) and real **Ngspice-47**:
   Target gain : >= 20.0 dB
   Max iters   : 10
   LLM model   : qwen2.5:7b
+  Trace file  : traces/run_20261016_122907.jsonl
   Sim mode    : ngspice
 
 ────────────────────────────────────────────────────────────────────
@@ -110,11 +133,12 @@ Running **aina** locally with Ollama (`qwen2.5:7b`) and real **Ngspice-47**:
 ────────────────────────────────────────────────────────────────────
   Iteration 1
 ────────────────────────────────────────────────────────────────────
-           W = 10.00 um
-           L = 0.50 um
-        Gain = +17.33 dB
-      C_para = 15.00 fF
-    Sim mode = ngspice
+             W = 10.00 um        L = 0.50 um  (W/L = 20.0)
+          Gain = +17.33 dB
+        C_para = 15.00 fF
+     Vout (DC) = 2.220 V (Vds saturation >= 0.3V: PASS)
+      Sim mode = ngspice
+     Telemetry = Tokens: 2953 (2643 in / 310 out) | Latency: 3.42s
 
   Agent reasoning:
     The target gain is >= 20 dB. For W=10, L=0.5, the gain is 17.33 dB,
@@ -125,11 +149,12 @@ Running **aina** locally with Ollama (`qwen2.5:7b`) and real **Ngspice-47**:
 ────────────────────────────────────────────────────────────────────
   Iteration 2
 ────────────────────────────────────────────────────────────────────
-           W = 20.00 um
-           L = 0.50 um
-        Gain = +22.99 dB
-      C_para = 30.00 fF
-    Sim mode = ngspice
+             W = 20.00 um        L = 0.50 um  (W/L = 40.0)
+          Gain = +22.99 dB
+        C_para = 30.00 fF
+     Vout (DC) = 1.140 V (Vds saturation >= 0.3V: PASS)
+      Sim mode = ngspice
+     Telemetry = Tokens: 3312 (2980 in / 332 out) | Latency: 3.65s
 
   Agent reasoning:
     With W=20 um and L=0.5 um, the simulated gain is 22.99 dB, which
@@ -146,6 +171,21 @@ Running **aina** locally with Ollama (`qwen2.5:7b`) and real **Ngspice-47**:
      2      20.00      0.50      +22.99         30.00  ✓ GOAL MET
 ════════════════════════════════════════════════════════════════════
   Converged in 2 iteration(s). Final: W=20.00 um, L=0.50 um, Gain=22.99 dB
+════════════════════════════════════════════════════════════════════
+
+════════════════════════════════════════════════════════════════════
+  OBSERVABILITY & TELEMETRY SUMMARY
+════════════════════════════════════════════════════════════════════
+  Total Wall Time          : 7.07 s
+  Avg Step Latency         : 3.53 s
+  Total Iterations         : 2
+────────────────────────────────────────────────────────────────────
+  Prompt Tokens            : 5623
+  Completion Tokens        : 642
+  Total Tokens             : 6265
+  Estimated Cost           : $0.0000 (Local = $0.00)
+────────────────────────────────────────────────────────────────────
+  Trace Log (JSONL)        : traces/run_20261016_122907.jsonl
 ════════════════════════════════════════════════════════════════════
 ```
 
@@ -189,6 +229,11 @@ pip install -r requirements.txt
 python main.py
 ```
 
+**Run with Arize Phoenix Trace UI enabled:**
+```bash
+python main.py --phoenix
+```
+
 **Run with analytic mock simulator (no Ngspice required):**
 ```bash
 python main.py --mock
@@ -214,6 +259,8 @@ python plot_gain.py
 | `--model M` | `qwen2.5:7b` | Ollama model name (must support tool use) |
 | `--target-gain G` | `20.0` | Target AC voltage gain threshold in dB |
 | `--max-iters N` | `10` | Hard cap on agentic feedback iterations |
+| `--phoenix` | `off` | Launch Arize Phoenix UI and trace LLM calls via OpenTelemetry |
+| `--trace-dir DIR` | `traces` | Directory to save structured JSONL telemetry logs |
 | `--verbose` | `off` | Enable detailed debug logging |
 
 ---
@@ -224,11 +271,15 @@ python plot_gain.py
 aina/
 ├── assets/
 │   └── gain_landscape.png   # Parameter landscape & agent trajectory plot
-├── agent_brain.py           # Brain: Ollama agent, tool schema, reasoning trace
-├── circuit_env.py           # Environment: SPICE netlist, parasitic model, Ngspice runner
-├── main.py                  # Orchestrator: CLI, rich ANSI output, summary reporting
+├── traces/
+│   ├── run_*.jsonl          # Session telemetry traces (tokens, latency, state)
+│   └── latest.jsonl         # Symlink/copy of the latest run
+├── agent_brain.py           # Brain: Ollama agent, tool schema, failure recovery prompt
+├── circuit_env.py           # Environment: SPICE netlist, DC operating point, error handlers
+├── tracer.py                # Observability: Arize Phoenix integration, token cost, JSONL
+├── main.py                  # Orchestrator: CLI, rich ANSI trace, summary reporting
 ├── plot_gain.py             # Script to generate publication-grade landscape plot
-├── requirements.txt         # Dependencies (openai, matplotlib, numpy)
+├── requirements.txt         # Dependencies (openai, phoenix, otel, matplotlib, numpy)
 ├── .env.example             # Configuration template
 ├── .gitignore
 └── README.md
@@ -239,6 +290,8 @@ aina/
 ## Key Highlights
 
 - ⚡ **100% Local & Free:** Powered by Ollama (`qwen2.5:7b`) and open-source **Ngspice-47**. No cloud API keys or subscriptions required.
+- 🛡️ **SPICE Failure Recovery:** Intercepts simulation errors (`Timestep too small`, `No convergence`) and DC triode headroom collapse, returning specific debugging prompts to the agent.
+- 📊 **Structured Observability:** Real-time token tracking, latency analysis, and seamless integration with **Arize Phoenix** and OpenInference.
 - 📐 **Domain-Specific Tool Use:** Strictly bounded parameter schemas prevent physical hallucinations while teaching the model analog trade-offs.
 - 🔬 **Physics-Aligned Mock:** Built-in Level-1 MOSFET analytic equations match Ngspice output within $0.2\text{ dB}$, enabling CI/CD testing without external binaries.
 - 🛡️ **Defensive Failure Guard:** Automatic out-of-bounds clamping and consecutive failure circuit breakers prevent runaways.
@@ -248,3 +301,4 @@ aina/
 ## License
 
 MIT © [Raunak Kumar](https://github.com/0xGu4rdI4N)
+

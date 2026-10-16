@@ -18,3 +18,7 @@ temp_run.sp
 # IDE
 .vscode/
 .idea/
+
+# Observability traces
+traces/run_*.jsonl
+

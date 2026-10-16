@@ -20,7 +20,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
 try:
     from openai import OpenAI
@@ -41,15 +41,22 @@ logger = logging.getLogger(__name__)
 @dataclass
 class IterationResult:
     """Captures everything that happened in one agent iteration."""
-    iteration:    int
-    w:            float
-    l:            float
-    gain:         Optional[float]
-    parasitic:    Optional[float]
-    sim_status:   str
-    reasoning:    str
-    goal_reached: bool = False
-    sim_mode:     str  = "unknown"
+    iteration:        int
+    w:                float
+    l:                float
+    gain:             Optional[float]
+    parasitic:        Optional[float]
+    sim_status:       str
+    reasoning:        str
+    goal_reached:     bool = False
+    sim_mode:         str  = "unknown"
+    error_type:       Optional[str] = None
+    diagnostic:       Optional[str] = None
+    suggested_action: Optional[str] = None
+    vout_dc:          Optional[float] = None
+    latency_ms:       Optional[float] = None
+    tokens:           Optional[dict] = None
+    cost_usd:         float = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -62,12 +69,11 @@ EVALUATE_DESIGN_TOOL = {
         "name":        "evaluate_design",
         "description": (
             "Simulate a Common-Source Amplifier with the given MOSFET dimensions. "
-            "Returns the small-signal AC gain at ~1 Hz in dB and the layout "
-            "parasitic capacitance. "
+            "Returns the small-signal AC gain at ~1 Hz in dB, DC output voltage Vout_dc, and layout "
+            "parasitic capacitance. Also checks saturation headroom (Vds >= Vov = 0.3V) and "
+            "catches SPICE convergence/timestep errors with actionable diagnostics. "
             "Physics: Gm = Kp*(W/L)*Vov, |Av| = Gm*Rout, C_para = W * 1.5 fF. "
-            "Larger W increases Gm (good) but also C_para (bad — rolls off gain). "
-            "Shorter L increases W/L ratio and hence Gm, but raises Gds. "
-            "Target: gain >= 30 dB."
+            "Larger W increases Gm but raises Id and C_para. If W/L is too high, headroom collapses into triode."
         ),
         "parameters": {
             "type":     "object",
@@ -102,15 +108,30 @@ the MOSFET in a Common-Source (CS) Amplifier to achieve voltage gain >= {target_
 CIRCUIT (matches the SPICE netlist exactly):
   Topology : nMOS CS amp, Rd = 10 kOhm, Vdd = 3.3 V, Vbias = 1.0 V
   Process  : Level-1 NMOS, Kp = 120 uA/V^2, Vto = 0.7 V, lambda = 0.02
-  Bias     : Vov = Vgs - Vto = 0.3 V  (M1 in saturation for all W in 1..50 um)
+  Bias     : Vov = Vgs - Vto = 0.3 V
   Parasitic: C_para (fF) = W (um) * 1.5  -- layout penalty
 
-KEY EQUATIONS:
+KEY EQUATIONS & PHYSICAL CONSTRAINTS:
   Gm     = Kp * (W/L) * Vov = 120e-6 * (W/L) * 0.3 = 36e-6 * (W/L)   [A/V]
   Id     = 0.5 * Kp * (W/L) * Vov^2 = 5.4e-6 * (W/L)                  [A]
-  Gds    = lambda * Id = 0.02 * Id                                       [A/V]
-  Rout   = Rd || (1/Gds)  ~  9.0 to 10.0 kOhm depending on W/L
+  Vout_dc= Vdd - Id * Rd = 3.3 - 0.054 * (W/L)                        [V]
+  Rout   = Rd || (1 / (0.02 * Id))                                    [Ohm]
   |Av|   = Gm * Rout  (DC gain magnitude)
+
+CRITICAL HEADROOM & SATURATION RULE:
+  For saturation amplification, Vds (= Vout_dc) MUST remain >= Vov (0.3 V).
+  If W/L exceeds ~55.5 (e.g. W=40 um, L=0.5 um -> W/L = 80), the drain current drop
+  Id * Rd exceeds 3.0 V, driving M1 into the TRIODE/LINEAR region!
+  In the triode region, Gm collapses, output resistance plummets, and gain drops sharply.
+  Keep W/L within the operating window: high enough for gain, but low enough for Vout_dc >= 0.3 V.
+
+FAILURE RECOVERY & DEBUGGING:
+  If evaluate_design returns a status other than "SUCCESS" (e.g., "PHYSICS_VIOLATION",
+  "TIMESTEP_TOO_SMALL", "CONVERGENCE_ERROR", or "TRIODE_REGION_HEADROOM_EXHAUSTED"):
+  - Inspect the returned "diagnostic" and "suggested_action" fields.
+  - If triode headroom collapsed: immediately REDUCE W or INCREASE L to lower Id.
+  - If SPICE solver numerical error: adjust W and L slightly to move away from the numerical singularity.
+  - Use the diagnostic feedback to recover in your next candidate sizing.
 
 DESIGN SPACE:
   W : 1.0 to 50.0 um
@@ -119,15 +140,14 @@ DESIGN SPACE:
 
 STRATEGY:
   1. Target condition: Gm * Rout >= {target_av:.2f}.
-  2. With Rout ~ 9.5 kOhm: estimated W/L >= {estimated_wl:.1f}.
-  3. Larger W raises C_para (fF = W*1.5). Prefer keeping L near minimum (0.5 um)
-     to maximize W/L without excessive W and parasitic capacitance.
+  2. With Rout ~ 9.5 kOhm: estimated required W/L >= {estimated_wl:.1f}.
+  3. Keep saturation headroom in mind: balance W/L for maximum gain without crushing Vout_dc.
   4. LANGUAGE: Always formulate your reasoning and replies in English.
 
 RULES:
   - Call evaluate_design ONCE per response with your chosen (W, L).
   - After seeing the result, analyze the gap and adjust W/L accordingly.
-  - Once gain >= {target_gain:.1f} dB, say exactly "Design Verified: Goal Reached" and stop.
+  - Once gain >= {target_gain:.1f} dB (and Vds >= 0.3V), say exactly "Design Verified: Goal Reached" and stop.
 """
 
 
@@ -146,6 +166,7 @@ class AgentBrain:
     target_gain : gain threshold in dB (default 20.0)
     model       : Ollama model name (must support tool use)
     host        : Ollama server URL (default: http://localhost:11434)
+    tracer      : Optional ObservabilityTracer instance for logging & telemetry
     """
 
     GOAL_PHRASES = [
@@ -162,11 +183,13 @@ class AgentBrain:
         target_gain: float = 20.0,
         model: str       = "qwen2.5:7b",
         host: str        = "http://localhost:11434",
+        tracer: Optional[Any] = None,
     ):
         self.env         = env
         self.max_iters   = max_iters
         self.target_gain = target_gain
         self.model       = model
+        self.tracer      = tracer
 
         # Ollama's OpenAI-compatible base URL
         self.client = OpenAI(
@@ -177,7 +200,7 @@ class AgentBrain:
         self.messages: list[dict]            = []
         self.history:  list[IterationResult] = []
         self._consecutive_failures           = 0
-        self._MAX_CONSECUTIVE_FAILURES       = 3
+        self._MAX_CONSECUTIVE_FAILURES       = 5
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -229,6 +252,10 @@ class AgentBrain:
 
     def _step(self, iteration: int) -> IterationResult:
         """Run one full agent step: LLM call -> tool execution -> LLM response."""
+        import time
+        t_start = time.time()
+        prompt_tokens = 0
+        completion_tokens = 0
 
         # ── 1. Ask the LLM ────────────────────────────────────────────────────
         response = self.client.chat.completions.create(
@@ -237,6 +264,10 @@ class AgentBrain:
             tools    = [EVALUATE_DESIGN_TOOL],
             tool_choice = "auto",
         )
+
+        if response.usage:
+            prompt_tokens += getattr(response.usage, "prompt_tokens", 0) or 0
+            completion_tokens += getattr(response.usage, "completion_tokens", 0) or 0
 
         msg = response.choices[0].message
         self.messages.append(msg.model_dump(exclude_none=True))
@@ -248,6 +279,7 @@ class AgentBrain:
         if not tool_calls:
             # LLM didn't call the tool — check if it declared victory
             goal_reached = any(p in content_text.lower() for p in self.GOAL_PHRASES)
+            latency_ms = (time.time() - t_start) * 1000.0
             if goal_reached and self.history:
                 last = self.history[-1]
                 return IterationResult(
@@ -260,6 +292,10 @@ class AgentBrain:
                     reasoning   = content_text,
                     goal_reached= True,
                     sim_mode    = last.sim_mode,
+                    error_type  = last.error_type,
+                    vout_dc     = last.vout_dc,
+                    latency_ms  = latency_ms,
+                    tokens      = {"prompt": prompt_tokens, "completion": completion_tokens, "total": prompt_tokens + completion_tokens},
                 )
             # Nudge the LLM to call the tool
             self.messages.append({
@@ -277,6 +313,8 @@ class AgentBrain:
                 parasitic  = None,
                 sim_status = "NO_TOOL_CALL",
                 reasoning  = content_text,
+                latency_ms = latency_ms,
+                tokens     = {"prompt": prompt_tokens, "completion": completion_tokens, "total": prompt_tokens + completion_tokens},
             )
 
         # Use the first tool call (there should only be one)
@@ -287,6 +325,7 @@ class AgentBrain:
             l    = float(args["l"])
         except (KeyError, ValueError, json.JSONDecodeError) as exc:
             logger.error("Bad tool args: %s — raw: %s", exc, tc.function.arguments)
+            latency_ms = (time.time() - t_start) * 1000.0
             return IterationResult(
                 iteration  = iteration,
                 w          = 0.0,
@@ -295,6 +334,8 @@ class AgentBrain:
                 parasitic  = None,
                 sim_status = "BAD_TOOL_ARGS",
                 reasoning  = content_text,
+                latency_ms = latency_ms,
+                tokens     = {"prompt": prompt_tokens, "completion": completion_tokens, "total": prompt_tokens + completion_tokens},
             )
 
         # ── 3. Run the simulator ───────────────────────────────────────────────
@@ -304,7 +345,7 @@ class AgentBrain:
             w, l,
             f"gain={sim_result.get('gain')} dB, parasitic={sim_result.get('parasitic')} fF"
             if sim_result["status"] == "SUCCESS"
-            else sim_result["status"],
+            else f"{sim_result.get('status')} ({sim_result.get('error_type')})",
         )
 
         # ── 4. Feed tool result back to the LLM ──────────────────────────────
@@ -322,42 +363,72 @@ class AgentBrain:
             tool_choice = "none",   # force text response, not another tool call
         )
 
+        if follow_up.usage:
+            prompt_tokens += getattr(follow_up.usage, "prompt_tokens", 0) or 0
+            completion_tokens += getattr(follow_up.usage, "completion_tokens", 0) or 0
+
         follow_msg     = follow_up.choices[0].message
         reasoning_text = (follow_msg.content or "").strip()
         self.messages.append(follow_msg.model_dump(exclude_none=True))
 
-        # ── 6. Determine outcome ──────────────────────────────────────────────
+        latency_ms = (time.time() - t_start) * 1000.0
+
+        # ── 6. Determine outcome & record trace ────────────────────────────────
+        gain             = sim_result.get("gain")
+        parasitic        = sim_result.get("parasitic")
+        sim_mode         = sim_result.get("mode", "unknown")
+        error_type       = sim_result.get("error_type")
+        diagnostic       = sim_result.get("diagnostic")
+        suggested_action = sim_result.get("suggested_action")
+        vout_dc          = sim_result.get("vout_dc")
+
         if sim_result["status"] == "SUCCESS":
             self._consecutive_failures = 0
-            gain      = sim_result["gain"]
-            parasitic = sim_result["parasitic"]
-            sim_mode  = sim_result.get("mode", "unknown")
-
             goal_reached = (
-                gain >= self.target_gain
+                (gain is not None and gain >= self.target_gain)
                 or any(p in reasoning_text.lower() for p in self.GOAL_PHRASES)
             )
-
-            return IterationResult(
-                iteration   = iteration,
-                w           = w,
-                l           = l,
-                gain        = gain,
-                parasitic   = parasitic,
-                sim_status  = "SUCCESS",
-                reasoning   = reasoning_text,
-                goal_reached= goal_reached,
-                sim_mode    = sim_mode,
-            )
+            sim_status = "SUCCESS"
         else:
             self._consecutive_failures += 1
-            return IterationResult(
-                iteration  = iteration,
-                w          = w,
-                l          = l,
-                gain       = None,
-                parasitic  = None,
-                sim_status = sim_result["status"],
-                reasoning  = reasoning_text,
-                sim_mode   = sim_result.get("mode", "unknown"),
+            goal_reached = False
+            sim_status = sim_result["status"]
+
+        if self.tracer:
+            self.tracer.log_step(
+                iteration         = iteration,
+                model             = self.model,
+                latency_ms        = latency_ms,
+                prompt_tokens     = prompt_tokens,
+                completion_tokens = completion_tokens,
+                w                 = w,
+                l                 = l,
+                sim_result        = sim_result,
+                reasoning         = reasoning_text,
+                goal_reached      = goal_reached,
             )
+
+        tokens_dict = {
+            "prompt": prompt_tokens,
+            "completion": completion_tokens,
+            "total": prompt_tokens + completion_tokens,
+        }
+
+        return IterationResult(
+            iteration        = iteration,
+            w                = w,
+            l                = l,
+            gain             = gain,
+            parasitic        = parasitic,
+            sim_status       = sim_status,
+            reasoning        = reasoning_text,
+            goal_reached     = goal_reached,
+            sim_mode         = sim_mode,
+            error_type       = error_type,
+            diagnostic       = diagnostic,
+            suggested_action = suggested_action,
+            vout_dc          = vout_dc,
+            latency_ms       = latency_ms,
+            tokens           = tokens_dict,
+        )
+
