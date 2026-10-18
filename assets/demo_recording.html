@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>aina (AI4aNAlog) — Autonomous Agent Terminal Walkthrough</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: rgba(15, 23, 42, 0.75);
+      --border: rgba(255, 255, 255, 0.1);
+      --terminal-bg: #0d1117;
+      --cyan: #38bdf8;
+      --green: #4ade80;
+      --yellow: #facc15;
+      --red: #f87171;
+      --purple: #c084fc;
+      --blue: #60a5fa;
+      --dim: #64748b;
+      --text: #f1f5f9;
+      --loom-red: #ff3366;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background: radial-gradient(circle at 50% 10%, #1e1b4b 0%, #090d16 65%, #030712 100%);
+      color: var(--text);
+      font-family: 'Inter', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      overflow-x: hidden;
+    }
+
+    /* Loom Frame Container */
+    .loom-wrapper {
+      width: 100%;
+      max-width: 1220px;
+      background: rgba(13, 17, 23, 0.95);
+      border-radius: 18px;
+      box-shadow: 0 25px 65px -15px rgba(0, 0, 0, 0.7), 0 0 0 1px var(--border);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+
+    /* Top Loom Bar */
+    .loom-header {
+      background: #090d16;
+      border-bottom: 1px solid var(--border);
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      user-select: none;
+    }
+
+    .loom-rec-status {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #e2e8f0;
+    }
+
+    .rec-dot {
+      width: 11px;
+      height: 11px;
+      background: var(--loom-red);
+      border-radius: 50%;
+      animation: pulse 1.5s infinite;
+      box-shadow: 0 0 10px var(--loom-red);
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.85); }
+    }
+
+    .loom-title {
+      font-size: 13px;
+      color: #94a3b8;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .badge-hd {
+      background: rgba(56, 189, 248, 0.15);
+      color: var(--cyan);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      padding: 2px 7px;
+      border-radius: 5px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    /* Main Stage */
+    .stage {
+      display: grid;
+      grid-template-columns: 1.15fr 0.85fr;
+      min-height: 640px;
+      background: var(--terminal-bg);
+      position: relative;
+    }
+
+    @media (max-width: 900px) {
+      .stage {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Left: Terminal */
+    .terminal-panel {
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      background: #090d16;
+    }
+
+    .terminal-topbar {
+      padding: 10px 16px;
+      background: #0f172a;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .win-btn {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+    }
+    .win-close { background: #ef4444; }
+    .win-min { background: #eab308; }
+    .win-max { background: #22c55e; }
+
+    .term-title {
+      margin-left: 12px;
+      font-size: 12px;
+      color: #94a3b8;
+      font-family: 'Fira Code', monospace;
+    }
+
+    .terminal-body {
+      padding: 18px 20px;
+      font-family: 'Fira Code', monospace;
+      font-size: 12.8px;
+      line-height: 1.6;
+      color: #e2e8f0;
+      flex: 1;
+      overflow-y: auto;
+      white-space: pre-wrap;
+    }
+
+    .t-cyan { color: var(--cyan); font-weight: 600; }
+    .t-green { color: var(--green); font-weight: 600; }
+    .t-yellow { color: var(--yellow); }
+    .t-red { color: var(--red); font-weight: 600; }
+    .t-purple { color: var(--purple); }
+    .t-blue { color: var(--blue); }
+    .t-dim { color: var(--dim); }
+    .t-bold { font-weight: 700; }
+
+    /* Right: Agent Brain & Inspector */
+    .inspector-panel {
+      padding: 24px;
+      background: rgba(15, 23, 42, 0.85);
+      backdrop-filter: blur(12px);
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .card {
+      background: rgba(30, 41, 59, 0.7);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+    }
+
+    .card-header {
+      font-size: 11.5px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #94a3b8;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-weight: 700;
+    }
+
+    .user-prompt-box {
+      border-left: 3px solid var(--cyan);
+      background: rgba(56, 189, 248, 0.08);
+      padding: 12px 14px;
+      border-radius: 0 8px 8px 0;
+      font-size: 13px;
+      line-height: 1.5;
+      color: #f8fafc;
+    }
+
+    .tool-box {
+      font-family: 'Fira Code', monospace;
+      font-size: 11.8px;
+      background: #030712;
+      padding: 12px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      color: #cbd5e1;
+      max-height: 130px;
+      overflow-y: auto;
+    }
+
+    .reasoning-box {
+      font-size: 12.8px;
+      line-height: 1.6;
+      color: #e2e8f0;
+      background: rgba(15, 23, 42, 0.95);
+      padding: 14px;
+      border-radius: 8px;
+      border: 1px solid rgba(96, 165, 250, 0.25);
+      position: relative;
+    }
+
+    .cursor {
+      display: inline-block;
+      width: 7px;
+      height: 14px;
+      background: var(--cyan);
+      vertical-align: middle;
+      animation: blink 0.8s infinite;
+    }
+
+    @keyframes blink {
+      0%, 50% { opacity: 1; }
+      51%, 100% { opacity: 0; }
+    }
+
+    /* Presenter Webcam Bubble */
+    .presenter-bubble {
+      position: absolute;
+      bottom: 24px;
+      left: 24px;
+      width: 140px;
+      height: 140px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #1e1b4b, #0f172a);
+      border: 3px solid var(--loom-red);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8), 0 0 20px rgba(255, 51, 102, 0.4);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 50;
+      overflow: hidden;
+      user-select: none;
+    }
+
+    .presenter-avatar {
+      font-size: 42px;
+      margin-bottom: 4px;
+    }
+
+    .presenter-name {
+      font-size: 10px;
+      font-weight: 700;
+      color: #f1f5f9;
+      background: rgba(0, 0, 0, 0.6);
+      padding: 2px 8px;
+      border-radius: 10px;
+    }
+
+    .sound-bars {
+      display: flex;
+      gap: 3px;
+      margin-top: 4px;
+      align-items: flex-end;
+      height: 12px;
+    }
+
+    .sbar {
+      width: 2.5px;
+      background: var(--loom-red);
+      border-radius: 2px;
+      animation: soundwave 1s ease-in-out infinite alternate;
+    }
+    .sbar:nth-child(1) { height: 6px; animation-delay: 0.1s; }
+    .sbar:nth-child(2) { height: 11px; animation-delay: 0.3s; }
+    .sbar:nth-child(3) { height: 8px; animation-delay: 0.2s; }
+    .sbar:nth-child(4) { height: 12px; animation-delay: 0.4s; }
+    .sbar:nth-child(5) { height: 5px; animation-delay: 0.15s; }
+
+    @keyframes soundwave {
+      0% { transform: scaleY(0.4); }
+      100% { transform: scaleY(1.2); }
+    }
+
+    /* Bottom Control Bar */
+    .loom-controls {
+      background: #090d16;
+      border-top: 1px solid var(--border);
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .play-btn {
+      background: var(--loom-red);
+      color: white;
+      border: none;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      box-shadow: 0 0 12px rgba(255, 51, 102, 0.4);
+      transition: transform 0.15s;
+    }
+    .play-btn:hover { transform: scale(1.08); }
+
+    .scrubber-track {
+      flex: 1;
+      height: 6px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 4px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .scrubber-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #ff3366, #38bdf8);
+      border-radius: 4px;
+      transition: width 0.3s ease;
+    }
+
+    .time-badge {
+      font-size: 11.5px;
+      color: #94a3b8;
+      font-family: 'Fira Code', monospace;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="loom-wrapper">
+    <!-- Loom Recording Header -->
+    <div class="loom-header">
+      <div class="loom-rec-status">
+        <div class="rec-dot"></div>
+        <span>aina • Autonomous Transistor Sizing Walkthrough</span>
+        <span class="badge-hd">1080p 60fps</span>
+      </div>
+      <div class="loom-title">
+        <span>Ollama (qwen2.5:7b) + Ngspice-47 Closed-Loop</span>
+      </div>
+    </div>
+
+    <!-- Main Workspace -->
+    <div class="stage">
+      <!-- Left: Terminal -->
+      <div class="terminal-panel">
+        <div class="terminal-topbar">
+          <div class="win-btn win-close"></div>
+          <div class="win-btn win-min"></div>
+          <div class="win-btn win-max"></div>
+          <div class="term-title">raunak@MacBook-Pro: ~/code/aina — zsh</div>
+        </div>
+        <div class="terminal-body" id="terminal-content"></div>
+      </div>
+
+      <!-- Right: Inspector -->
+      <div class="inspector-panel">
+        <!-- User Prompt Card -->
+        <div class="card">
+          <div class="card-header">
+            <span>👤 User Objective &amp; Prompt</span>
+            <span style="color: var(--cyan);">Target: &ge; 20.0 dB</span>
+          </div>
+          <div class="user-prompt-box">
+            <strong>Prompt:</strong> "Begin sizing the CS amplifier. Target: gain &ge; 20.0 dB. Use evaluate_design to simulate each candidate. Start with your best initial guess based on circuit physics."
+          </div>
+        </div>
+
+        <!-- Tool Call Execution Card -->
+        <div class="card">
+          <div class="card-header">
+            <span>⚡ Autonomous Tool Call</span>
+            <span id="tool-status" style="color: var(--yellow);">Waiting for Agent…</span>
+          </div>
+          <div class="tool-box" id="tool-json">
+// Tool call payload will appear here during simulation...
+          </div>
+        </div>
+
+        <!-- Agent Reasoning Stream -->
+        <div class="card" style="flex: 1;">
+          <div class="card-header">
+            <span>🧠 Chain-of-Thought Reflection</span>
+            <span style="color: var(--purple);">qwen2.5:7b Local</span>
+          </div>
+          <div class="reasoning-box" id="reasoning-text">
+            <span id="reasoning-stream"></span><span class="cursor"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Presenter Overlay Bubble -->
+      <div class="presenter-bubble">
+        <div class="presenter-avatar">🧑‍💻</div>
+        <div class="presenter-name">Raunak (aina)</div>
+        <div class="sound-bars">
+          <div class="sbar"></div>
+          <div class="sbar"></div>
+          <div class="sbar"></div>
+          <div class="sbar"></div>
+          <div class="sbar"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom Controls -->
+    <div class="loom-controls">
+      <button class="play-btn" id="play-pause" onclick="togglePlay()">⏸</button>
+      <div class="scrubber-track">
+        <div class="scrubber-fill" id="progress-bar"></div>
+      </div>
+      <div class="time-badge" id="time-display">00:00 / 00:15</div>
+    </div>
+  </div>
+
+  <script>
+    const term = document.getElementById("terminal-content");
+    const toolStatus = document.getElementById("tool-status");
+    const toolJson = document.getElementById("tool-json");
+    const reasoningStream = document.getElementById("reasoning-stream");
+    const progressBar = document.getElementById("progress-bar");
+    const timeDisplay = document.getElementById("time-display");
+
+    let isPlaying = true;
+    let step = 0;
+    const totalSteps = 6;
+
+    const timeline = [
+      // 0s: Command launch
+      () => {
+        term.innerHTML = `<span class="t-dim">$ python main.py --target-gain 20.0 --model qwen2.5:7b</span>\n\n` +
+          `<span class="t-cyan t-bold">  ╔══════════════════════════════════════════╗</span>\n` +
+          `<span class="t-cyan t-bold">  ║              aina  v1.0                  ║</span>\n` +
+          `<span class="t-cyan t-bold">  ║   AI4aNAlog: Autonomous SPICE Sizing     ║</span>\n` +
+          `<span class="t-cyan t-bold">  ╚══════════════════════════════════════════╝</span>\n\n` +
+          `  Target gain : <span class="t-green t-bold">&gt;= 20.0 dB</span>\n` +
+          `  Max iters   : <span class="t-bold">10</span>\n` +
+          `  LLM model   : <span class="t-bold">qwen2.5:7b</span>\n` +
+          `  Sim mode    : <span class="t-bold">ngspice</span>\n` +
+          `  Trace file  : <span class="t-dim">traces/run_live.jsonl</span>\n\n` +
+          `<span class="t-dim">────────────────────────────────────────────────────────────────────</span>\n` +
+          `  Starting agentic loop…\n`;
+        toolStatus.innerText = "Initializing Model";
+        toolStatus.style.color = "var(--cyan)";
+        toolJson.innerText = `{\n  "action": "booting_agent",\n  "model": "qwen2.5:7b",\n  "host": "localhost:11434"\n}`;
+        reasoningStream.innerText = "Analyzing small-signal target: |Av| >= 20 dB means |Av| >= 10. With Rd=10k, Gm needs to be >= 1.0 mA/V. Initializing first sizing...";
+      },
+
+      // 3s: Iteration 1 Launch
+      () => {
+        term.innerHTML += `\n<span class="t-dim">────────────────────────────────────────────────────────────────────</span>\n` +
+          `<span class="t-cyan t-bold">  Iteration 1</span>\n` +
+          `<span class="t-dim">────────────────────────────────────────────────────────────────────</span>\n` +
+          `             W = <span class="t-bold">10.00 um</span>        L = <span class="t-bold">0.50 um</span>  (W/L = 20.0)\n`;
+        toolStatus.innerText = "Executing SPICE Netlist";
+        toolStatus.style.color = "var(--yellow)";
+        toolJson.innerText = `{\n  "function": "evaluate_design",\n  "parameters": {\n    "w": 10.0,\n    "l": 0.5\n  }\n}`;
+        reasoningStream.innerText = "Formulating initial conservative estimate: W=10 um, L=0.5 um gives W/L = 20.0. Expecting Gm ~ 720 uA/V.";
+      },
+
+      // 6s: Iteration 1 SPICE Result
+      () => {
+        term.innerHTML += `          Gain = <span class="t-yellow">+17.33 dB</span>\n` +
+          `        C_para = <span class="t-bold">15.00 fF</span>\n` +
+          `     Vout (DC) = <span class="t-bold">2.220 V</span> (Vds saturation >= 0.3V: <span class="t-green">PASS</span>)\n` +
+          `      Sim mode = <span class="t-dim">ngspice</span>\n` +
+          `     Telemetry = <span class="t-purple">Tokens: 2953 | Latency: 3.42s</span>\n\n` +
+          `  <span class="t-blue t-bold">Agent reasoning:</span>\n` +
+          `  <span class="t-dim">  The target gain is >= 20.0 dB. For W=10 um, L=0.5 um, the gain is\n` +
+          `    17.33 dB, falling short by 2.67 dB. To achieve the extra gain, we\n` +
+          `    need to increase transconductance Gm. Doubling W to 20 um will boost\n` +
+          `    Gm while keeping L at minimum (0.5 um) and Vds comfortably saturated.</span>\n`;
+        toolStatus.innerText = "Simulation Finished (Shortfall: 2.67 dB)";
+        toolStatus.style.color = "var(--yellow)";
+        toolJson.innerText = `{\n  "status": "SUCCESS",\n  "gain": 17.33,\n  "parasitic": 15.0,\n  "vout_dc": 2.22,\n  "mode": "ngspice"\n}`;
+        reasoningStream.innerText = "SPICE confirmed Gain = 17.33 dB. Gap to target is +2.67 dB. Parasitic penalty is mild (15 fF). Doubling width to 20.0 um to reach target.";
+      },
+
+      // 9s: Iteration 2 Launch
+      () => {
+        term.innerHTML += `\n<span class="t-dim">────────────────────────────────────────────────────────────────────</span>\n` +
+          `<span class="t-cyan t-bold">  Iteration 2</span>\n` +
+          `<span class="t-dim">────────────────────────────────────────────────────────────────────</span>\n` +
+          `             W = <span class="t-bold">20.00 um</span>        L = <span class="t-bold">0.50 um</span>  (W/L = 40.0)\n`;
+        toolStatus.innerText = "Evaluating Next Candidate (W=20, L=0.5)";
+        toolStatus.style.color = "var(--yellow)";
+        toolJson.innerText = `{\n  "function": "evaluate_design",\n  "parameters": {\n    "w": 20.0,\n    "l": 0.5\n  }\n}`;
+      },
+
+      // 12s: Iteration 2 Result & Goal Reached
+      () => {
+        term.innerHTML += `          Gain = <span class="t-green t-bold">+22.99 dB</span>\n` +
+          `        C_para = <span class="t-bold">30.00 fF</span>\n` +
+          `     Vout (DC) = <span class="t-bold">1.140 V</span> (Vds saturation >= 0.3V: <span class="t-green">PASS</span>)\n` +
+          `      Sim mode = <span class="t-dim">ngspice</span>\n` +
+          `     Telemetry = <span class="t-purple">Tokens: 3312 | Latency: 3.65s</span>\n\n` +
+          `  <span class="t-blue t-bold">Agent reasoning:</span>\n` +
+          `  <span class="t-dim">  With W=20 um and L=0.5 um, the simulated gain is 22.99 dB, which\n` +
+          `    exceeds the 20 dB specification. Vout_dc = 1.14 V is safely in\n` +
+          `    saturation. Target achieved. Design Verified: Goal Reached</span>\n\n` +
+          `  <span class="t-green t-bold">✓  Design Verified: Goal Reached  ✓</span>\n`;
+        toolStatus.innerText = "Goal Reached (22.99 dB >= 20.0 dB)";
+        toolStatus.style.color = "var(--green)";
+        toolJson.innerText = `{\n  "status": "SUCCESS",\n  "gain": 22.99,\n  "parasitic": 30.0,\n  "vout_dc": 1.14,\n  "goal_met": true\n}`;
+        reasoningStream.innerText = "SUCCESS! Gain = 22.99 dB meets specification >= 20.0 dB. Vout_dc = 1.14 V satisfies saturation condition. Sizing verified!";
+      },
+
+      // 15s: Final Results & Observability Table
+      () => {
+        term.innerHTML += `\n<span class="t-dim">════════════════════════════════════════════════════════════════════</span>\n` +
+          `<span class="t-bold">  RESULTS SUMMARY</span>\n` +
+          `<span class="t-dim">════════════════════════════════════════════════════════════════════</span>\n` +
+          `<span class="t-bold">  Iter     W (um)    L (um)   Gain (dB)   C_para (fF)  Status</span>\n` +
+          `<span class="t-dim">────────────────────────────────────────────────────────────────────</span>\n` +
+          `     1      10.00      0.50      +17.33         15.00  SUCCESS\n` +
+          `<span class="t-green t-bold">     2      20.00      0.50      +22.99         30.00  ✓ GOAL MET</span>\n` +
+          `<span class="t-dim">════════════════════════════════════════════════════════════════════</span>\n` +
+          `<span class="t-green t-bold">  Converged in 2 iteration(s). Final: W=20.00 um, L=0.50 um, Gain=22.99 dB</span>\n` +
+          `<span class="t-dim">════════════════════════════════════════════════════════════════════</span>\n\n` +
+          `<span class="t-dim">════════════════════════════════════════════════════════════════════</span>\n` +
+          `<span class="t-cyan t-bold">  OBSERVABILITY &amp; TELEMETRY SUMMARY</span>\n` +
+          `<span class="t-dim">════════════════════════════════════════════════════════════════════</span>\n` +
+          `  Total Wall Time          : <span class="t-bold">7.07 s</span>\n` +
+          `  Total Iterations         : <span class="t-bold">2</span>\n` +
+          `  Total Tokens             : <span class="t-green t-bold">6265</span>\n` +
+          `  Estimated Cost           : <span class="t-bold">$0.0000 (Local = $0.00)</span>\n` +
+          `  Trace Log (JSONL)        : <span class="t-dim">traces/run_live.jsonl</span>\n` +
+          `<span class="t-dim">════════════════════════════════════════════════════════════════════</span>\n`;
+      }
+    ];
+
+    function runAnimation() {
+      if (!isPlaying) return;
+      if (step < timeline.length) {
+        timeline[step]();
+        step++;
+        const pct = (step / timeline.length) * 100;
+        progressBar.style.width = pct + "%";
+        const curSec = Math.floor(step * 2.5);
+        timeDisplay.innerText = `00:${curSec < 10 ? '0' + curSec : curSec} / 00:15`;
+        setTimeout(runAnimation, 2500);
+      } else {
+        // Loop back after 4 seconds
+        setTimeout(() => {
+          step = 0;
+          runAnimation();
+        }, 4000);
+      }
+    }
+
+    function togglePlay() {
+      isPlaying = !isPlaying;
+      document.getElementById("play-pause").innerText = isPlaying ? "⏸" : "▶";
+      if (isPlaying) runAnimation();
+    }
+
+    // Start playback
+    runAnimation();
+  </script>
+</body>
+</html>

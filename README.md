@@ -42,6 +42,16 @@ Below is the small-signal voltage gain landscape computed across the $(W, L)$ de
 
 ---
 
+## 🎥 Loom Terminal Walkthrough Demo
+
+Below is the live execution walkthrough of **aina** running in the terminal. The session demonstrates the user prompt (`--target-gain 20.0`), multi-turn parameter sizing, autonomous SPICE tool calls, chain-of-thought reflection, and final design verification:
+
+![aina Loom Terminal Walkthrough](assets/loom_walkthrough.png)
+
+> 💡 **Interactive Walkthrough Player:** Open [`assets/demo_recording.html`](assets/demo_recording.html) in any browser to watch the full animated terminal recording with scrubber controls, presenter bubble, and real-time reasoning stream.
+
+---
+
 ## System Architecture
 
 ```
