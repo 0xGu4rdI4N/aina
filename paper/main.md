@@ -84,7 +84,7 @@ We evaluated four model configurations under identical zero-shot expert system p
 | **Qwen-2.5-7B-Instruct** | 7.6B | `Q4_K_M` (4.7 GB) | **0 / 4 (0.0%)** | 10.0% | Omitted $W/L$ in $I_D$; confused triode with cutoff; calculated $(W/L)_{\text{crit}} = 360$. |
 | **Qwen-2.5-7B-Instruct** | 7.6B | `Q8_0` (8.1 GB) | **0 / 4 (0.0%)** | 12.5% | Identical conceptual error as Q4; quantization is not the bottleneck. |
 | **Qwen-2.5-Math-7B-Instruct** | 7.6B | `Q8_0` (8.1 GB) | **0 / 4 (0.0%)** | 5.0% | Dimensionally invalid: used $W \cdot L$ (area) instead of $W/L$; invented $\sqrt{V_{ov}}$. |
-| **Qwen-2.5-14B-Instruct** | 14.7B | `Q4_K_M` (9.0 GB) | **4 / 4 (100.0%)** | **88.8%** | **Emergent physics:** Derived exact $(W/L)_{\text{crit}} = \mathbf{55.56}$, exact $R_z = 1/g_{m2}$, and $\text{CMRR} \approx 2 g_m R_{SS}$. |
+| **Qwen-2.5-14B-Instruct** | 14.7B | `Q4_K_M` (9.0 GB) | **0 / 4 (0.0%)** | **38.8%** | Partial concept recall (60% on RAZAVI-01, 50% on RAZAVI-02), but failed all questions due to factor-of-2 parameter confusion ($111.11$) and reversed $\lambda$ physics in RAZAVI-04. |
 | **Golden Reference Solution** | — | Symbolic Ground Truth | **4 / 4 (100.0%)** | 100.0% | Standard analytical textbook derivations. |
 
 ### 4.1. Key Analytical Observations
@@ -95,10 +95,13 @@ Upgrading Qwen-2.5-7B from 4-bit (`Q4_K_M`) to unquantized 8-bit (`Q8_0`) did no
 #### Observation 2: The Math Specialization Trap
 `Qwen2.5-Math-7B` exhibited fluent LaTeX typesetting and rigorous algebraic syntax, but committed severe dimensional errors. In `RAZAVI-02`, it asserted $I_d = K_p W L V_{ov}^2$, confusing aspect ratio with silicon active area. General mathematical optimization does not transfer to physical semiconductor conservation laws.
 
-#### Observation 3: Emergence at 14B Parameters
-At 14.7B parameters, `Qwen-2.5-14B` correctly instantiated the full level-1 MOSFET system:
-$$I_D = \frac{1}{2} K_p \left(\frac{W}{L}\right) V_{ov}^2, \quad V_{out,DC} = V_{DD} - I_D R_D, \quad V_{DS} \ge V_{ov}$$
-$$\left(\frac{W}{L}\right)_{\text{crit}} = \frac{2 (V_{DD} - V_{ov})}{K_p V_{ov}^2 R_D} = \frac{2(3.0)}{120\mu \cdot 0.09 \cdot 10\text{k}} = \frac{6}{0.108} = \mathbf{55.56}$$
+#### Observation 3: Partial Recall vs. Fatal Contradictions at 14B Scale
+Scaling to 14.7B parameters (`Qwen-2.5-14B`) increased the qualitative reasoning score from $10.0\%$ to $38.8\%$, demonstrating stronger conceptual vocabulary (pole splitting, feedforward paths, virtual grounds). However, it **still failed 100% of the benchmark questions (0/4 passed)** due to critical physical errors:
+1. **Factor-of-2 Process Ambiguity (`RAZAVI-02`):** While correctly recognizing that $I_D \propto W/L$ and establishing the $V_{DS} \ge V_{ov}$ headroom boundary, it misdefined $K_p = 2 \mu_n C_{ox}$ to infer $\mu_n C_{ox} = 60\,\mu\text{A/V}^2$, yielding $(W/L)_{\text{crit}} = 111.11$ (exactly $2\times$ the golden $55.56$).
+2. **Reversed Channel-Length Modulation (`RAZAVI-04`):** It asserted that doubling $L$ *decreases* output resistance $r_o$ and reduces intrinsic gain $g_m r_o$ by $2.83\times$, in direct opposition to physical reality ($\lambda \propto 1/L \implies r_o \propto L$).
+3. **Unphysical Nulling Resistance Formula (`RAZAVI-01`):** It formulated $R_z = \frac{1}{\omega_z (g_{m2} C_c)}$ rather than the exact condition $R_z = 1/g_{m2}$.
+
+These findings demonstrate that **scale alone (up to 14B) does not produce zero-shot analog circuit mastery**. Without domain-specific grounding (RLSF / SPICE-in-the-loop), even 14B models produce confident but physically fatal design conclusions.
 
 ---
 

@@ -117,21 +117,33 @@
 ```
 * **Diagnosis:** Multiplied $W \times L$ (gate area in $\mu\text{m}^2$) instead of dividing by aspect ratio ($W/L$); invented $\sqrt{V_{ov}}$ for $g_m$; claimed gate voltage drops through the load resistor.
 
-#### 3. Qwen-2.5-14B-Instruct (Emergent Correctness)
+#### 3. Qwen-2.5-14B-Instruct (Partial Recall with Critical Physics Contradictions)
+* **Run Pass Rate:** 0 / 4 (0.0%), Average Score: 38.8%
+* **Trace File:** `traces/benchmarks/razavi_qwen2.5_14b_20261019_173826.json`
+
 ```text
-[Sound Derivation: Exact Symbolic & Algebraic Alignment]
-"In saturation:
- Id = 1/2 * Kp * (W/L) * Vov^2
- gm = Kp * (W/L) * Vov
- As W increases while L is fixed, W/L increases, increasing Id and gm.
- DC output voltage is Vout,DC = Vdd - Id * Rd.
- The transistor enters triode when Vds < Vov.
- At the boundary Vds = Vov:
- Id = (Vdd - Vov) / Rd = (3.3 - 0.3) / 10k = 300 uA.
- Equating: 1/2 * 120u * (W/L) * (0.3)^2 = 300 uA
- (W/L)crit = 600 / 10.8 = 55.56."
+[Failure Mode A: Factor-of-2 Process Ambiguity in RAZAVI-02]
+"Given Kp = 120 uA/V^2, which implies mu_n * Cox = Kp / 2 = 60 uA/V^2...
+ Equating: 0.3 mA = 0.045 * 60e-6 * (W/L)
+ (W/L)crit = (0.3 / 2.7) * 10^3 = 111.11."
 ```
-* **Diagnosis:** 100% physically sound; exact numerical derivation matching golden textbook theory.
+* **Diagnosis:** The model understood the physical boundary ($V_{DS} \ge V_{ov}$ and $V_{out,DC} = V_{DD} - I_D R_D$) and scaled $I_D \propto W/L$, but erroneously divided $K_p$ by 2 (interpreting $K_p$ as $2 \mu_n C_{ox}$), resulting in $(W/L)_{\text{crit}} = 111.11$ (exactly $2\times$ the golden 55.56).
+
+```text
+[Failure Mode B: Reversed Channel-Length Modulation in RAZAVI-04]
+"Assuming lambda does not change significantly with L... ro is inversely proportional to L:
+ ro_new = ro_old / 2.
+ The intrinsic gain decreases by a factor of 2*sqrt(2) or approximately 2.83:
+ gain_new = gain_old / (2*sqrt(2))."
+```
+* **Diagnosis:** Complete 180-degree physical contradiction. In CMOS physics, channel-length modulation parameter $\lambda$ scales inversely with length ($\lambda \propto 1/L$), meaning longer channel devices have *less* modulation and therefore *higher* output resistance ($r_o = 1/(\lambda I_D) \propto L$). The model claimed $r_o$ and intrinsic gain decrease when $L$ is doubled.
+
+```text
+[Failure Mode C: Unphysical Nulling Resistance Formula in RAZAVI-01]
+"The value of the nulling resistor Rz should be chosen such that:
+ Rz = 1 / (omega_z * gm2 * Cc)..."
+```
+* **Diagnosis:** Hallucinated a frequency-dependent formula with $\omega_z$ in the denominator instead of the fundamental frequency-independent condition $R_z = 1/g_{m2}$.
 
 ---
 
