@@ -20,6 +20,7 @@ import json
 import os
 import sys
 import time
+from typing import Optional, Dict, Any, List
 
 from benchmarks.razavi_reasoning import (
     RazaviBenchmark,
@@ -72,40 +73,83 @@ def run_razavi_suite(live_llm: bool = False, model_name: str = "qwen2.5:7b") -> 
     suite = get_default_razavi_suite()
     benchmark = RazaviBenchmark(suite)
 
+    def on_progress(idx: int, total: int, q, eval_res: Optional[dict]):
+        if eval_res is None:
+            print(f"\n  [{idx}/{total}] Reasoning on {_c(q.qid, BOLD)}: {q.title}…", flush=True)
+        else:
+            status_icon = _c("✓ PASS", GREEN, BOLD) if eval_res["passed"] else _c("✗ FAIL", RED, BOLD)
+            score_pct = eval_res["score"] * 100.0
+            score_str = f"{score_pct:.1f}%"
+            print(f"    Verdict  : {status_icon} (Score: {_c(score_str, BOLD, GREEN if eval_res['passed'] else RED)})", flush=True)
+            print(f"    Feedback : {_c(eval_res['feedback'], DIM)}", flush=True)
+
     # In demo mode, evaluate the reference reasoning answers
-    # In live mode, query Ollama for each question
+    # In live mode, query Ollama for each question with real-time token streaming
     if live_llm:
-        print(f"  Querying live Ollama model: {_c(model_name, BOLD, GREEN)}…")
+        print(f"  Querying live Ollama model: {_c(model_name, BOLD, GREEN)}…", flush=True)
+        print("  Streaming model reasoning live:\n", flush=True)
         try:
             from openai import OpenAI
             client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
 
             def live_solver(prompt: str) -> str:
-                res = client.chat.completions.create(
+                print(f"{_bar('·', 60)}")
+                stream = client.chat.completions.create(
                     model=model_name,
                     messages=[
-                        {"role": "system", "content": "You are an expert analog CMOS IC designer. Provide rigorous analytical explanations in English."},
+                        {"role": "system", "content": "You are an expert analog CMOS IC designer. Provide rigorous analytical explanations and exact numerical derivations in English."},
                         {"role": "user", "content": prompt},
                     ],
+                    stream=True,
                 )
-                return res.choices[0].message.content or ""
+                collected = []
+                for chunk in stream:
+                    delta = chunk.choices[0].delta.content or ""
+                    if delta:
+                        collected.append(delta)
+                        sys.stdout.write(delta)
+                        sys.stdout.flush()
+                print(f"\n{_bar('·', 60)}")
+                return "".join(collected)
 
-            summary = benchmark.run_on_solver(live_solver)
+            summary = benchmark.run_on_solver(live_solver, on_progress=on_progress)
         except Exception as exc:
             print(_c(f"  Live query failed ({exc}) — falling back to reference evaluation.", YELLOW))
-            summary = benchmark.run_on_solver(lambda p: next(q.reference_answer for q in suite if q.prompt == p))
+            summary = benchmark.run_on_solver(
+                lambda p: next(q.reference_answer for q in suite if q.prompt == p),
+                on_progress=on_progress,
+            )
     else:
-        summary = benchmark.run_on_solver(lambda p: next(q.reference_answer for q in suite if q.prompt == p))
+        summary = benchmark.run_on_solver(
+            lambda p: next(q.reference_answer for q in suite if q.prompt == p),
+            on_progress=on_progress,
+        )
 
-    for item in summary["question_evaluations"]:
-        status_icon = _c("✓ PASS", GREEN, BOLD) if item["passed"] else _c("✗ FAIL", RED, BOLD)
-        qid_domain = next(q.domain for q in suite if q.qid == item['qid'])
-        score_pct = item["score"] * 100.0
-        score_str = f"{score_pct:.1f}%"
-        print(f"\n  {_c(item['qid'], BOLD)}: {item['title']} [{status_icon}]")
-        print(f"    Domain   : {_c(qid_domain, DIM)}")
-        print(f"    Score    : {_c(score_str, BOLD, GREEN if item['passed'] else RED)}")
-        print(f"    Feedback : {_c(item['feedback'], DIM)}")
+    # Save reasoning stream and full report to traces/benchmarks/
+    save_dir = "traces/benchmarks"
+    os.makedirs(save_dir, exist_ok=True)
+    clean_model = model_name.replace(":", "_").replace("/", "_")
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    json_path = os.path.join(save_dir, f"razavi_{clean_model}_{timestamp}.json")
+    md_path = os.path.join(save_dir, f"razavi_{clean_model}_{timestamp}.md")
+
+    with open(json_path, "w") as fh:
+        json.dump(summary, fh, indent=2)
+
+    with open(md_path, "w") as fh:
+        fh.write(f"# Razavi Domain Reasoning Benchmark — Run Report\n\n")
+        fh.write(f"- **Model**: `{model_name}`\n")
+        fh.write(f"- **Timestamp**: `{timestamp}`\n")
+        fh.write(f"- **Overall Benchmark Score**: `{summary['benchmark_score']:.1f}%` ({summary['passed_questions']}/{summary['total_questions']} passed)\n\n")
+        fh.write(f"---\n\n")
+        for item in summary["question_evaluations"]:
+            status_tag = "PASSED" if item["passed"] else "FAILED"
+            fh.write(f"## {item['qid']}: {item['title']} [{status_tag}]\n\n")
+            fh.write(f"- **Score**: `{item['score']*100:.1f}%`\n")
+            fh.write(f"- **Feedback**: {item['feedback']}\n\n")
+            fh.write(f"### Model's Output & Reasoning Stream\n\n```text\n")
+            fh.write(item.get("generated_answer", "").strip())
+            fh.write(f"\n```\n\n---\n\n")
 
     print(f"\n  {_bar()}")
     benchmark_score_str = f"{summary['benchmark_score']:.1f} / 100.0"
@@ -113,6 +157,8 @@ def run_razavi_suite(live_llm: bool = False, model_name: str = "qwen2.5:7b") -> 
     score_col = GREEN if summary["benchmark_score"] >= 75.0 else YELLOW
     print(f"  Razavi Benchmark Score : {_c(benchmark_score_str, BOLD, score_col)}")
     print(f"  Questions Passed       : {_c(passed_str, BOLD)}")
+    print(f"  Reasoning Log (MD)     : {_c(md_path, BOLD, GREEN)}")
+    print(f"  Evaluation Data (JSON) : {_c(json_path, DIM)}")
     print(_bar('═'))
 
     return summary["pass_rate_pct"] >= 75.0

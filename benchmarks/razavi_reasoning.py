@@ -106,9 +106,9 @@ def get_default_razavi_suite() -> List[RazaviQuestion]:
                 "critical W/L",
             ],
             positive_indicators=[
-                r"(?i)gm\s+increases|id\s+increases",
-                r"(?i)vout\s*(,|decreases|drops|falls)",
-                r"(?i)vds\s*(<|<=|less\s+than)\s*vov|vds\s*<\s*0\.3",
+                r"(?i)(gm|transconductance|id|drain\s+current).*(increase|larger|higher)|(?i)(increase|larger|higher).*(gm|transconductance|id|drain\s+current)",
+                r"(?i)(vout|output\s+voltage).*(decrease|drop|fall|lower)|(?i)(decrease|drop|fall|lower).*(vout|output\s+voltage)",
+                r"(?i)vds.*(less|<|<=|becomes\s+less).*(vov|overdrive)|vds\s*<\s*0\.3",
                 r"(?i)55|55\.5|55\.6|56",  # Critical W/L: (3.3 - 0.3) / (0.5 * 120u * 0.3^2 * 10k) = 3.0 / 0.054 = 55.55
             ],
             negative_indicators=[
@@ -229,6 +229,19 @@ def get_default_razavi_suite() -> List[RazaviQuestion]:
     ]
 
 
+def normalize_circuit_text(text: str) -> str:
+    """Normalizes LaTeX wrappers, subscripts, and formatting for fair symbolic matching."""
+    cleaned = re.sub(r"\\[\(\)\[\]]", " ", text)
+    cleaned = re.sub(r"[{}\$\*]", " ", cleaned)
+    cleaned = re.sub(r"(?i)\b([vV])_?(ds|gs|ov|th|dd|out)\b", lambda m: m.group(1).upper() + m.group(2).lower(), cleaned)
+    cleaned = re.sub(r"(?i)\b([gG])_?(m[0-9]?)\b", lambda m: m.group(1).lower() + m.group(2).lower(), cleaned)
+    cleaned = re.sub(r"(?i)\b([rR])_?(z|ss|out|load|[0-9]+)\b", lambda m: m.group(1).upper() + m.group(2).lower(), cleaned)
+    cleaned = re.sub(r"(?i)\b([cC])_?(c|load|para|gg)\b", r"C\2", cleaned)
+    cleaned = re.sub(r"(?i)\b([iI])_?(d|bias|tail|in)\b", lambda m: m.group(1).upper() + m.group(2).lower(), cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned
+
+
 def evaluate_reasoning_response(question: RazaviQuestion, response_text: str) -> Dict:
     """
     Evaluates an agent/LLM response against verifiable symbolic rubric indicators.
@@ -242,14 +255,16 @@ def evaluate_reasoning_response(question: RazaviQuestion, response_text: str) ->
         detected_violations: list of str
         feedback: str (diagnostic for RL reward modeling)
     """
+    norm_text = normalize_circuit_text(response_text)
+
     pos_matches = []
     for pattern in question.positive_indicators:
-        if re.search(pattern, response_text):
+        if re.search(pattern, response_text) or re.search(pattern, norm_text):
             pos_matches.append(pattern)
 
     neg_violations = []
     for pattern in question.negative_indicators:
-        if re.search(pattern, response_text):
+        if re.search(pattern, response_text) or re.search(pattern, norm_text):
             neg_violations.append(pattern)
 
     # Score calculation
@@ -285,31 +300,43 @@ class RazaviBenchmark:
     def __init__(self, questions: Optional[List[RazaviQuestion]] = None):
         self.questions = questions or get_default_razavi_suite()
 
-    def run_on_solver(self, solver_fn: Callable[[str], str]) -> Dict:
+    def run_on_solver(
+        self,
+        solver_fn: Callable[[str], str],
+        on_progress: Optional[Callable[[int, int, RazaviQuestion, Optional[Dict]], None]] = None,
+    ) -> Dict:
         """
         Runs the benchmark on a model callable (prompt -> response_text).
 
         Parameters
         ----------
         solver_fn : Callable taking prompt string and returning generated text.
+        on_progress : Optional callback (index, total, question, eval_result_or_none)
         """
         results = []
         total_score = 0.0
+        total_q = len(self.questions)
 
-        for q in self.questions:
+        for idx, q in enumerate(self.questions, 1):
+            if on_progress:
+                on_progress(idx, total_q, q, None)
+
             answer = solver_fn(q.prompt)
             eval_res = evaluate_reasoning_response(q, answer)
             eval_res["generated_answer"] = answer
             results.append(eval_res)
             total_score += eval_res["score"]
 
-        avg_score = (total_score / len(self.questions)) * 100.0 if self.questions else 0.0
+            if on_progress:
+                on_progress(idx, total_q, q, eval_res)
+
+        avg_score = (total_score / total_q) * 100.0 if total_q else 0.0
         pass_count = sum(1 for r in results if r["passed"])
 
         return {
-            "total_questions": len(self.questions),
+            "total_questions": total_q,
             "passed_questions": pass_count,
-            "pass_rate_pct": round((pass_count / len(self.questions)) * 100.0, 1),
+            "pass_rate_pct": round((pass_count / total_q) * 100.0, 1),
             "benchmark_score": round(avg_score, 1),
             "question_evaluations": results,
         }

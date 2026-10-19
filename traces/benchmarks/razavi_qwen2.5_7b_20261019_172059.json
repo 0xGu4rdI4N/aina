@@ -1,0 +1,68 @@
+{
+  "total_questions": 4,
+  "passed_questions": 4,
+  "pass_rate_pct": 100.0,
+  "benchmark_score": 88.8,
+  "question_evaluations": [
+    {
+      "qid": "RAZAVI-01",
+      "title": "Miller Compensation & RHP Zero Elimination",
+      "score": 1.0,
+      "passed": true,
+      "matched_positives": [
+        "(?i)pole\\s+splitting",
+        "(?i)gm2\\s*[\\*\\/]?\\s*r1\\s*r2\\s*cc|1\\s*/\\s*\\(\\s*gm2\\s*r1\\s*r2\\s*cc\\)",
+        "(?i)feedforward\\s+(path|current)|through\\s+cc",
+        "(?i)rz\\s*=\\s*1\\s*/\\s*gm2|1\\s*/\\s*gm2",
+        "(?i)left-half\\s+plane|lhp|cancel\\s+(the\\s+)?(second|nondominant)\\s+pole"
+      ],
+      "detected_violations": [],
+      "feedback": "Rigorous analog domain deduction verified.",
+      "generated_answer": "1. Pole Splitting: Connecting Cc across the inverting second stage (gain -gm2*R2) multiplies the effective input capacitance via the Miller effect to ~gm2*R2*Cc. This pushes the dominant pole down to p1 \u2248 1 / (gm2 * R1 * R2 * Cc). Simultaneously, the non-dominant pole is pushed out to p2 \u2248 gm2 / CL.\n2. RHP Zero: At high frequencies, signal flows forward directly from stage 1 through Cc to the output without phase inversion. Because the feedforward path is in-phase with the input while the main amplifier path is inverting (-gm2), they cancel at s = +gm2/Cc, creating a Right-Half-Plane (RHP) zero that adds phase lag without gain rolloff, severely degrading phase margin.\n3. Nulling Resistor Rz: Placing Rz in series with Cc creates a zero at z = 1 / [Cc * (1/gm2 - Rz)]. Choosing Rz = 1/gm2 pushes the zero to infinity (eliminating it). Choosing Rz = (1 + CL/Cc) / gm2 moves the zero into the Left-Half-Plane (LHP) to exactly cancel the second pole p2, boosting phase margin."
+    },
+    {
+      "qid": "RAZAVI-02",
+      "title": "Triode Headroom Collapse in Resistive-Load CS Amplifier",
+      "score": 0.75,
+      "passed": true,
+      "matched_positives": [
+        "(?i)(gm|transconductance|id|drain\\s+current).*(increase|larger|higher)|(?i)(increase|larger|higher).*(gm|transconductance|id|drain\\s+current)",
+        "(?i)(vout|output\\s+voltage).*(decrease|drop|fall|lower)|(?i)(decrease|drop|fall|lower).*(vout|output\\s+voltage)",
+        "(?i)55|55\\.5|55\\.6|56"
+      ],
+      "detected_violations": [],
+      "feedback": "Missing 1 key analytical deductions. Rigorous analog domain deduction verified.",
+      "generated_answer": "1. Saturation Relationships: As W increases with fixed L, drain current Id = 0.5*Kp*(W/L)*Vov^2 increases proportionally (5.4 \u00b5A per unit W/L), and transconductance gm = Kp*(W/L)*Vov increases proportionally (36 \u00b5A/V per unit W/L).\n2. DC Output & Triode Boundary: As Id increases, the voltage drop across Rd increases, causing Vout,DC = Vdd - Id*Rd to fall. Saturation requires Vds >= Vgs - Vth = Vov (here Vds >= 0.3 V). When Vout,DC falls below 0.3 V, M1 leaves saturation and collapses into the triode region, causing gm to collapse and output resistance ro to plummet.\n3. Critical W/L: To maintain Vds >= 0.3 V on a 3.3 V rail, the maximum allowable drop across Rd is 3.3 V - 0.3 V = 3.0 V. Max Id = 3.0 V / 10 k\u03a9 = 300 \u00b5A. Equating 0.5 * 120e-6 * (W/L) * (0.3)^2 = 300e-6 gives: 5.4e-6 * (W/L) = 300e-6 => (W/L)crit = 300 / 5.4 = 55.56."
+    },
+    {
+      "qid": "RAZAVI-03",
+      "title": "Differential Pair CMRR & Tail Resistance Dependency",
+      "score": 1.0,
+      "passed": true,
+      "matched_positives": [
+        "(?i)av,?dm\\s*=\\s*-?\\s*gm\\s*\\*?\\s*rd",
+        "(?i)av,?cm\\s*[:=\u2248].*(gm\\s*\\*?\\s*rd|rd\\s*/\\s*\\(?2\\s*\\*?\\s*rss\\)?)",
+        "(?i)cmrr\\s*[:=\u2248].*(gm\\s*\\*?\\s*rss|2\\s*\\*?\\s*gm\\s*\\*?\\s*rss)",
+        "(?i)cascode|active\\s+current\\s+source|regulated\\s+cascode"
+      ],
+      "detected_violations": [],
+      "feedback": "Rigorous analog domain deduction verified.",
+      "generated_answer": "1. Voltage Gains: In differential mode, the tail node is a virtual ground, yielding Av,DM = -gm * Rd. In common-mode, both sides move in tandem; the tail resistance Rss sees 2*Id, appearing as 2*Rss per branch: Av,CM = -gm*Rd / (1 + 2*gm*Rss) \u2248 -Rd / (2*Rss).\n2. CMRR: CMRR = |Av,DM / Av,CM| = 1 + 2*gm*Rss \u2248 2*gm*Rss (in decibels: 20*log10(2*gm*Rss)).\n3. Physical Role of Rss: Higher Rss provides stronger negative source-degeneration feedback against common-mode disturbances. To boost Rss by a factor of gm*ro without sacrificing supply headroom, designers employ a cascode tail current source or regulated (gain-boosted) cascode."
+    },
+    {
+      "qid": "RAZAVI-04",
+      "title": "Channel-Length Modulation & Intrinsic Gain Trade-offs",
+      "score": 0.8,
+      "passed": true,
+      "matched_positives": [
+        "(?i)gm\\s+(remains\\s+constant|unchanged|same|is\\s+unchanged)",
+        "(?i)ro\\s+(doubles|increases|scales\\s+with\\s+l)",
+        "(?i)gm\\s*\\*?\\s*ro\\s+(doubles|increases|scales)",
+        "(?i)(cgg|capacitance)\\s+.*(quadruples|increases|four-fold)|(ft|frequency)\\s+.*(decreases|drops|halved|4)"
+      ],
+      "detected_violations": [],
+      "feedback": "Missing 1 key analytical deductions. Rigorous analog domain deduction verified.",
+      "generated_answer": "1. Scaling of gm, ro, and \u03bb: Because W/L and Id are fixed, the overdrive Vov and transconductance gm = sqrt(2*Kp*(W/L)*Id) remain constant. The channel-length modulation parameter \u03bb scales inversely with length (\u03bb \u221d 1/L). Therefore, doubling L halves \u03bb, which doubles output resistance ro = 1 / (\u03bb * Id).\n2. Intrinsic Gain: Since gm is unchanged and ro doubles, the intrinsic gain gm * ro doubles (an increase of +6.02 dB).\n3. Speed Penalty: To keep W/L constant while L doubles, W must also double. The total gate area W*L quadruples (2W * 2L = 4*W*L). Consequently, gate capacitance Cgg = Cox * W * L increases four-fold, and unity-gain cutoff frequency fT \u2248 gm / (2\u03c0 * Cgg) drops by a factor of 4, sacrificing high-frequency speed for voltage gain."
+    }
+  ]
+}
