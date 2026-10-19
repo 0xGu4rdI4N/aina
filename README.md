@@ -4,9 +4,11 @@
 > *Pronounced "aa-ee-nah"*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![Ngspice](https://img.shields.io/badge/SPICE-Ngspice--47-orange.svg)](https://ngspice.sourceforge.io/)
-[![Ollama](https://img.shields.io/badge/LLM-Ollama%20(Local%20%26%20Free)-green.svg)](https://ollama.com/)
+[![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue.svg?logo=python&logoColor=white)](https://www.python.org/downloads/)
+[![SPICE: Ngspice-47](https://img.shields.io/badge/SPICE-Ngspice--47-orange.svg)](https://ngspice.sourceforge.io/)
+[![LLM: Ollama](https://img.shields.io/badge/LLM-Ollama-black.svg?logo=ollama&logoColor=white)](https://ollama.com/)
+[![Observability: Arize Phoenix](https://img.shields.io/badge/Observability-Arize%20Phoenix-orange.svg)](https://phoenix.arize.com/)
+[![Validation: Dynamic Mock & SPICE](https://img.shields.io/badge/Validation-Dynamic%20Mock%20%26%20SPICE-success.svg)](#-instant-dynamic-validation--mock-simulation)
 
 ---
 
@@ -77,9 +79,19 @@ Below is the live execution walkthrough of **aina** running in the terminal. The
        └───────────────────────────────────────────┘
 ```
 
-### Circuit Physics & Netlist Specs
+### Circuit Physics & Open Source Netlists
 
-The environment tests a classic NMOS Common-Source Amplifier with resistive load:
+The environment tests a classic NMOS Common-Source Amplifier with resistive load. All SPICE netlists are fully open-sourced in the [`netlists/`](netlists/) directory:
+
+- **Netlist Template:** [`netlists/common_source_template.sp`](netlists/common_source_template.sp) — Parameterized with `{W_val}`, `{L_val}`, and `{C_para}` for closed-loop agent injection.
+- **Golden Nominal Sizing:** [`netlists/common_source_nominal.sp`](netlists/common_source_nominal.sp) — Self-contained reference netlist at the converged design point ($W=20\ \mu\text{m}, L=0.5\ \mu\text{m}$).
+- **Netlist Documentation:** [`netlists/README.md`](netlists/README.md) — Comprehensive pinouts, device physics, and simulation guidelines.
+
+#### Standalone SPICE Execution
+You can simulate the golden netlist directly in Ngspice without Python:
+```bash
+ngspice -b netlists/common_source_nominal.sp
+```
 
 - **Technology:** Level-1 NMOS model ($K_p = 120\ \mu\text{A/V}^2$, $V_{to} = 0.7\text{ V}$, $\lambda = 0.02\text{ V}^{-1}$)
 - **Supply & Bias:** $V_{dd} = 3.3\text{ V}$, $V_{bias} = 1.0\text{ V} \implies V_{ov} = V_{gs} - V_{to} = 0.3\text{ V}$ (ensuring saturation across $W \in [1, 50]\ \mu\text{m}$)
@@ -201,6 +213,64 @@ Running **aina** locally with Ollama (`qwen2.5:7b`) and structured telemetry:
 
 ---
 
+## 🏆 Standardized Benchmarks & RL Reasoning Framework (RLSF)
+
+To measure **aina** against state-of-the-art literature ([LOADBench arXiv:2610.21591](https://arxiv.org/abs/2610.21591), [AgenticSizing arXiv:2609.25873](https://arxiv.org/abs/2609.25873), [AutoCkt arXiv:2001.01808](https://arxiv.org/abs/2001.01808)), **aina** includes a unified benchmark and verifiable reinforcement learning suite:
+
+```bash
+# Run all benchmark suites in instant demo mode (< 0.1s)
+python benchmark_runner.py
+
+# Or run individual suites
+python benchmark_runner.py --suite razavi   # Razavi Domain Reasoning Suite
+python benchmark_runner.py --suite ota      # LOADBench Two-Stage Miller OTA Suite
+python benchmark_runner.py --suite rl       # Generate Verifiable DPO/GRPO RL dataset
+```
+
+### 1. Razavi Domain Reasoning Benchmark (`benchmarks/razavi_reasoning.py`)
+Evaluates the model's small-signal qualitative intuition and physical invariants before launching expensive simulations:
+- **Miller Compensation & RHP Zero Elimination:** Pole-splitting mechanisms ($\omega_{p1} \approx \frac{1}{g_{m2} R_1 R_2 C_c}$) and zero elimination via nulling resistor ($R_z = 1/g_{m2}$).
+- **Headroom Exhaustion:** Dynamic triode boundary detection ($V_{ds} < V_{ov} = 0.3\text{ V}$) and critical aspect ratio calculation ($W/L_{\text{crit}} = 55.56$).
+- **Differential Pair CMRR:** Virtual ground isolation, tail impedance scaling ($R_{SS}$), and cascode active loads.
+- **Channel-Length Modulation:** Intrinsic voltage gain ($g_m r_o$) scaling vs. $f_T$ and $C_{gg}$ speed degradation.
+
+### 2. Two-Stage Miller CMOS OTA Benchmark (`benchmarks/two_stage_ota.py`)
+Standardized 8-transistor operational transconductance amplifier benchmark with parameterized netlist ([`netlists/two_stage_ota_template.sp`](netlists/two_stage_ota_template.sp)) graded on a **Multi-Claim Rubric**:
+- **Gain Claim:** Low-frequency DC open-loop gain $|A_v| \ge 40.0\text{ dB}$ (nominal design achieves $+79.27\text{ dB}$).
+- **Stability Claim:** Phase Margin $\text{PM} \ge 60.0^\circ$ (nominal design achieves $89.0^\circ$).
+- **Speed Claim:** Unity-Gain Bandwidth $\text{UGBW} \ge 5.0\text{ MHz}$ (nominal design achieves $188.25\text{ MHz}$).
+- **Power Claim:** Quiescent power consumption $P_{diss} \le 2.0\text{ mW}$ on $V_{dd} = 3.3\text{ V}$.
+- **Physics Claim:** All active devices verified strictly in saturation ($V_{ds} \ge V_{gs} - V_{th}$).
+
+### 3. Verifiable RL Reasoning from SPICE Feedback (`rl_reasoning.py`)
+Implements mathematically verifiable reward modeling (RLVR / DeepSeek-R1 style) where ground truth is physically deterministic:
+$$R = R_{\text{domain\_reasoning}} + R_{\text{SPICE\_rubric}} - R_{\text{format\_penalty}}$$
+- Penalizes small-signal contradictions (e.g. claiming $W \uparrow \implies g_m \downarrow$) and triode collapses.
+- Generates pairwise Direct Preference Optimization (DPO / GRPO) datasets saved directly to [`traces/rl_preferences.jsonl`](traces/rl_preferences.jsonl).
+
+---
+
+## ⚡ Instant Dynamic Validation & Mock Simulation
+
+For hiring managers, founders, and evaluators who want to inspect and run the complete autonomous agent loop **instantly in < 1 second** without compiling Ngspice or running Ollama locally:
+
+```bash
+# Run the complete dynamic validation suite (tests physics, SPICE templates, & agent loop)
+python validate.py
+
+# Or run the main orchestrator in zero-dependency demo mode
+python main.py --demo
+```
+
+### What `validate.py` dynamically verifies:
+- 🔬 **Physics Verification:** Computes Level-1 MOSFET small-signal equations ($g_m, r_o, R_{out}, |A_v|$) and ensures that the analytic mock aligns with Ngspice to within $\le 0.19\text{ dB}$.
+- 🛡️ **Headroom & Error Interceptors:** Validates triode region headroom collapse detection ($V_{ds} < 0.3\text{ V}$), boundary clamping ($W \in [1, 50]\ \mu\text{m}$, $L \in [0.5, 10]\ \mu\text{m}$), and SPICE numerical error classifications.
+- 🤖 **Autonomous Agentic Loop:** Simulates the complete multi-turn reasoning and tool-calling trajectory ($W=10\ \mu\text{m} \to W=20\ \mu\text{m}$ achieving $+22.8\text{ dB}$), logs telemetry, and exports structured JSONL traces.
+- 📐 **Open Source Netlists:** Inspects and validates the parameterized [`netlists/common_source_template.sp`](netlists/common_source_template.sp) and golden [`netlists/common_source_nominal.sp`](netlists/common_source_nominal.sp).
+
+---
+
+
 ## Quickstart
 
 ### 1. Prerequisites
@@ -234,6 +304,16 @@ pip install -r requirements.txt
 
 ### 3. Run aina
 
+**Run instant validation suite (zero external binaries required):**
+```bash
+python validate.py
+```
+
+**Run instant demo mode (simulated LLM + mock SPICE):**
+```bash
+python main.py --demo
+```
+
 **Run with local Ollama + real Ngspice:**
 ```bash
 python main.py
@@ -244,7 +324,7 @@ python main.py
 python main.py --phoenix
 ```
 
-**Run with analytic mock simulator (no Ngspice required):**
+**Run with analytic mock simulator (no Ngspice required, with local Ollama):**
 ```bash
 python main.py --mock
 ```
@@ -265,6 +345,7 @@ python plot_gain.py
 
 | Flag | Default | Description |
 |------|---------|-------------|
+| `--demo` | `off` | Run instant demo mode with simulated LLM & mock SPICE (zero local setup required) |
 | `--mock` | `off` | Force analytic mock simulator (no Ngspice required) |
 | `--model M` | `qwen2.5:7b` | Ollama model name (must support tool use) |
 | `--target-gain G` | `20.0` | Target AC voltage gain threshold in dB |
@@ -280,20 +361,36 @@ python plot_gain.py
 ```text
 aina/
 ├── assets/
-│   └── gain_landscape.png   # Parameter landscape & agent trajectory plot
+│   ├── gain_landscape.png        # Parameter landscape & agent trajectory plot
+│   ├── loom_walkthrough.png      # Terminal walkthrough recording preview
+│   └── demo_recording.html       # Interactive animated terminal recording player
+├── benchmarks/
+│   ├── __init__.py               # Benchmark exports
+│   ├── razavi_reasoning.py       # Razavi qualitative circuit reasoning benchmark
+│   └── two_stage_ota.py          # LOADBench / AutoCkt Two-Stage Miller OTA benchmark
+├── netlists/
+│   ├── common_source_template.sp # Parameterized Common-Source SPICE netlist
+│   ├── common_source_nominal.sp  # Standalone golden reference netlist (22.99 dB)
+│   ├── two_stage_ota_template.sp # Parameterized 8-transistor Two-Stage Miller OTA
+│   └── README.md                 # Netlist topology, pinout & device modeling guide
 ├── traces/
-│   ├── run_*.jsonl          # Session telemetry traces (tokens, latency, state)
-│   └── latest.jsonl         # Symlink/copy of the latest run
-├── agent_brain.py           # Brain: Ollama agent, tool schema, failure recovery prompt
-├── circuit_env.py           # Environment: SPICE netlist, DC operating point, error handlers
-├── tracer.py                # Observability: Arize Phoenix integration, token cost, JSONL
-├── main.py                  # Orchestrator: CLI, rich ANSI trace, summary reporting
-├── plot_gain.py             # Script to generate publication-grade landscape plot
-├── requirements.txt         # Dependencies (openai, phoenix, otel, matplotlib, numpy)
-├── .env.example             # Configuration template
+│   ├── run_*.jsonl               # Session telemetry traces (tokens, latency, state)
+│   ├── latest.jsonl              # Symlink/copy of the latest run
+│   └── rl_preferences.jsonl      # Generated DPO/GRPO preference dataset for fine-tuning
+├── agent_brain.py                # Brain: Ollama agent, MockAgentBrain, tool schema, recovery prompt
+├── circuit_env.py                # Environment: Netlist loader, DC operating point, error handlers
+├── tracer.py                     # Observability: Arize Phoenix integration, token cost, JSONL
+├── main.py                       # Orchestrator: CLI, --demo flag, rich ANSI trace, summary
+├── validate.py                   # Dynamic validation suite & mock simulation runner
+├── benchmark_runner.py           # Unified runner for Razavi suite, Two-Stage OTA, & RL generator
+├── rl_reasoning.py               # Verifiable RL from SPICE Feedback (RLSF) & reward model
+├── plot_gain.py                  # Script to generate publication-grade landscape plot
+├── requirements.txt              # Dependencies (openai, phoenix, otel, matplotlib, numpy)
+├── .env.example                  # Configuration template
 ├── .gitignore
 └── README.md
 ```
+
 
 ---
 

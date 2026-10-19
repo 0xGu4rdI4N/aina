@@ -88,10 +88,11 @@ class BasicCircuitEnv:
         None  -> auto-detect: Ngspice if found in PATH, mock otherwise.
     """
 
-    # Netlist uses:
-    #   Vbias = 1.0 V  (gate DC bias, Vov = 0.3 V)
-    #   Rd    = 10 kΩ
-    NETLIST_TEMPLATE = """\
+    NETLIST_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "netlists")
+    NETLIST_TEMPLATE_FILE = os.path.join(NETLIST_DIR, "common_source_template.sp")
+
+    # Fallback template if netlists/common_source_template.sp is not found
+    DEFAULT_NETLIST_TEMPLATE = """\
 * aina v1.0 -- Common-Source Amplifier (AI 4 aNAlog)
 * --------------------------------------------------
 .model nfet nmos (level=1 vto=0.7 kp=120u lambda=0.02)
@@ -121,11 +122,12 @@ Cparasitic out 0 {C_para}f
 .endc
 .end
 """
+    NETLIST_TEMPLATE = DEFAULT_NETLIST_TEMPLATE
 
     W_MIN, W_MAX = 1.0,  50.0   # um
     L_MIN, L_MAX = 0.5,  10.0   # um
 
-    def __init__(self, use_mock=None):
+    def __init__(self, use_mock=None, netlist_template_path: Optional[str] = None):
         ngspice_found = shutil.which("ngspice") is not None
 
         if use_mock is True:
@@ -136,6 +138,19 @@ Cparasitic out 0 {C_para}f
             self._mode = "ngspice"
         else:
             self._mode = "ngspice" if ngspice_found else "mock"
+
+        # Load netlist template from disk or fallback
+        template_file = netlist_template_path or self.NETLIST_TEMPLATE_FILE
+        if os.path.exists(template_file):
+            try:
+                with open(template_file, "r") as fh:
+                    self.netlist_template = fh.read()
+                logger.info("Loaded SPICE netlist template from %s", template_file)
+            except Exception as exc:
+                logger.warning("Could not read %s (%s); using default template", template_file, exc)
+                self.netlist_template = self.DEFAULT_NETLIST_TEMPLATE
+        else:
+            self.netlist_template = self.DEFAULT_NETLIST_TEMPLATE
 
         logger.info("BasicCircuitEnv initialised -- simulation mode: %s", self._mode)
 
@@ -220,8 +235,9 @@ Cparasitic out 0 {C_para}f
         }
 
     def _run_ngspice(self, w, l, parasitic_c) -> dict:
-        netlist      = self.NETLIST_TEMPLATE.format(W_val=w, L_val=l, C_para=parasitic_c)
-        netlist_path = "temp_run.sp"
+        template = getattr(self, "netlist_template", self.DEFAULT_NETLIST_TEMPLATE)
+        netlist  = template.format(W_val=w, L_val=l, C_para=parasitic_c)
+        netlist_path = os.path.join(self.NETLIST_DIR, "temp_run.sp") if os.path.isdir(self.NETLIST_DIR) else "temp_run.sp"
 
         with open(netlist_path, "w") as fh:
             fh.write(netlist)

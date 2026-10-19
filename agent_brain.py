@@ -432,3 +432,100 @@ class AgentBrain:
             tokens           = tokens_dict,
         )
 
+
+class MockAgentBrain:
+    """
+    Deterministic Analog IC Agent that simulates the multi-turn reasoning,
+    tool calls, and iterative reflection of Ollama (qwen2.5:7b) without
+    requiring an active Ollama daemon or OpenAI API key.
+    """
+
+    def __init__(
+        self,
+        env: BasicCircuitEnv,
+        max_iters: int = 10,
+        target_gain: float = 20.0,
+        model: str = "mock-qwen2.5:7b",
+        tracer: Optional[Any] = None,
+    ):
+        self.env = env
+        self.max_iters = max_iters
+        self.target_gain = target_gain
+        self.model = model
+        self.tracer = tracer
+        self.history: list[IterationResult] = []
+
+    def run(self) -> list[IterationResult]:
+        for iteration in range(1, min(self.max_iters, 2) + 1):
+            result = self._step(iteration)
+            self.history.append(result)
+            if result.goal_reached:
+                break
+        return self.history
+
+    def _step(self, iteration: int) -> IterationResult:
+        import time
+        time.sleep(0.12)  # Brief delay simulating real-time agent reasoning
+        t_start = time.time()
+
+        if iteration == 1:
+            w, l = 10.0, 0.5
+            sim = self.env.evaluate_design(w, l)
+            reasoning = (
+                f"The target AC voltage gain is >= {self.target_gain:.1f} dB. For initial sizing, "
+                f"choosing W = {w:.1f} µm and minimum channel length L = {l:.1f} µm yields W/L = {w/l:.1f}. "
+                f"The simulated gain is {sim['gain']:+.2f} dB, falling short of the {self.target_gain:.1f} dB specification by "
+                f"{self.target_gain - sim['gain']:.2f} dB. DC output headroom is healthy at Vout = {sim.get('vout_dc', 2.22):.3f} V "
+                f"(Vds > Vov = 0.3 V: PASS). To bridge the remaining gain deficit, transconductance Gm must be boosted "
+                f"by increasing width W to 20.0 µm while maintaining minimum L to limit channel-length modulation."
+            )
+            tokens = {"prompt": 2640, "completion": 280, "total": 2920}
+            goal_reached = False
+        else:
+            w, l = 20.0, 0.5
+            sim = self.env.evaluate_design(w, l)
+            goal_reached = sim.get("gain", 0.0) >= self.target_gain
+            reasoning = (
+                f"With W = {w:.1f} µm and L = {l:.1f} µm (W/L = {w/l:.1f}), transconductance increases to "
+                f"satisfy the target. The simulated gain is {sim['gain']:+.2f} dB, exceeding the target specification "
+                f"of {self.target_gain:.1f} dB. DC operating point check confirms Vout = {sim.get('vout_dc', 1.14):.3f} V "
+                f"(Vds >= 0.3 V: saturation maintained with {sim.get('vout_dc', 1.14) - 0.3:.3f} V headroom). "
+                f"Layout parasitic capacitance is {sim.get('parasitic', 30.0):.1f} fF. Design Verified: Goal Reached."
+            )
+            tokens = {"prompt": 2950, "completion": 310, "total": 3260}
+
+        latency_ms = (time.time() - t_start) * 1000.0 + 150.0
+
+        if self.tracer:
+            self.tracer.log_step(
+                iteration=iteration,
+                model=self.model,
+                latency_ms=latency_ms,
+                prompt_tokens=tokens["prompt"],
+                completion_tokens=tokens["completion"],
+                w=w,
+                l=l,
+                sim_result=sim,
+                reasoning=reasoning,
+                goal_reached=goal_reached,
+            )
+
+        return IterationResult(
+            iteration=iteration,
+            w=w,
+            l=l,
+            gain=sim.get("gain"),
+            parasitic=sim.get("parasitic"),
+            sim_status=sim.get("status", "SUCCESS"),
+            reasoning=reasoning,
+            goal_reached=goal_reached,
+            sim_mode=sim.get("mode", self.env.mode),
+            error_type=sim.get("error_type"),
+            diagnostic=sim.get("diagnostic"),
+            suggested_action=sim.get("suggested_action"),
+            vout_dc=sim.get("vout_dc"),
+            latency_ms=latency_ms,
+            tokens=tokens,
+        )
+
+

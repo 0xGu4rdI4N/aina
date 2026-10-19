@@ -21,7 +21,7 @@ import sys
 import textwrap
 
 from circuit_env import BasicCircuitEnv
-from agent_brain import AgentBrain, IterationResult
+from agent_brain import AgentBrain, IterationResult, MockAgentBrain
 from tracer import ObservabilityTracer
 
 # ---------------------------------------------------------------------------
@@ -163,7 +163,8 @@ def parse_args() -> argparse.Namespace:
         description="aina (AI 4 aNAlog): Autonomous Transistor Sizing with Agentic Feedback",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    p.add_argument("--mock",        action="store_true",  help="Force analytic mock (no Ngspice required)")
+    p.add_argument("--demo",        action="store_true",  help="Run instant demo mode with simulated LLM & mock SPICE (zero local setup required)")
+    p.add_argument("--mock",        action="store_true",  help="Force analytic mock simulator (no Ngspice required)")
     p.add_argument("--max-iters",   type=int,   default=10,   metavar="N", help="Max agentic iterations")
     p.add_argument("--target-gain", type=float, default=20.0, metavar="G", help="Target gain in dB")
     p.add_argument("--model",       type=str,   default="qwen2.5:7b", help="Ollama LLM model name")
@@ -189,9 +190,11 @@ def main() -> int:
     print(_c("  ║              aina  v1.0                  ║", CYAN, BOLD))
     print(_c("  ║   AI4aNAlog: Autonomous SPICE Sizing     ║", CYAN))
     print(_c("  ╚══════════════════════════════════════════╝", CYAN))
+    if args.demo:
+        print(_c("  Mode        : Instant Demo (Zero Local Setup Required)", BOLD, MAGENTA))
     print(f"\n  Target gain : {_c(f'>= {args.target_gain:.1f} dB', BOLD, GREEN)}")
     print(f"  Max iters   : {_c(str(args.max_iters), BOLD)}")
-    print(f"  LLM model   : {_c(args.model, BOLD)}")
+    print(f"  LLM model   : {_c('mock-qwen2.5:7b' if args.demo else args.model, BOLD)}")
 
     # ── Observability & Tracing ──────────────────────────────────────────────
     tracer = ObservabilityTracer(
@@ -204,7 +207,8 @@ def main() -> int:
 
     # ── Environment ───────────────────────────────────────────────────────────
     try:
-        env = BasicCircuitEnv(use_mock=True if args.mock else None)
+        use_mock = True if (args.mock or args.demo) else None
+        env = BasicCircuitEnv(use_mock=use_mock)
     except EnvironmentError as exc:
         print(_c(f"\n  [ERROR] {exc}", RED, BOLD))
         return 1
@@ -212,17 +216,26 @@ def main() -> int:
     print(f"  Sim mode    : {_c(env.mode, BOLD)}")
 
     # ── Agent ─────────────────────────────────────────────────────────────────
-    try:
-        brain = AgentBrain(
+    if args.demo:
+        brain = MockAgentBrain(
             env         = env,
             max_iters   = args.max_iters,
             target_gain = args.target_gain,
-            model       = args.model,
+            model       = "mock-qwen2.5:7b",
             tracer      = tracer,
         )
-    except EnvironmentError as exc:
-        print(_c(f"\n  [ERROR] {exc}", RED, BOLD))
-        return 1
+    else:
+        try:
+            brain = AgentBrain(
+                env         = env,
+                max_iters   = args.max_iters,
+                target_gain = args.target_gain,
+                model       = args.model,
+                tracer      = tracer,
+            )
+        except EnvironmentError as exc:
+            print(_c(f"\n  [ERROR] {exc}", RED, BOLD))
+            return 1
 
     # ── Agentic loop ──────────────────────────────────────────────────────────
     print(f"\n{_bar('─')}")
@@ -230,7 +243,7 @@ def main() -> int:
 
     history: list[IterationResult] = []
 
-    # We hook into AgentBrain._step to print results as they arrive
+    # We hook into brain._step to print results as they arrive
     original_step = brain._step
 
     def _traced_step(iteration: int) -> IterationResult:
@@ -245,6 +258,17 @@ def main() -> int:
     except KeyboardInterrupt:
         print(_c("\n\n  Interrupted by user.", YELLOW))
     except Exception as exc:
+        err_msg = str(exc)
+        if any(term in err_msg for term in ["Connection error", "ConnectError", "11434", "connection refused", "Failed to connect"]):
+            print(_c("\n  [ERROR] Could not connect to Ollama at http://localhost:11434.", RED, BOLD))
+            print(_c("  Ollama is required for live LLM execution ('ollama serve' && 'ollama pull qwen2.5:7b').", YELLOW))
+            print(_c("\n  💡 Instant Demo / No-Prerequisite Mode:", BOLD, GREEN))
+            print(_c("     To test the complete agent loop without running Ollama or compiling Ngspice, run:", GREEN))
+            print(_c("       python main.py --demo", BOLD, GREEN))
+            print(_c("     Or run the dynamic validation suite:", GREEN))
+            print(_c("       python validate.py", BOLD, GREEN))
+            return 1
+
         print(_c(f"\n  [FATAL] {exc}", RED, BOLD))
         if args.verbose:
             import traceback
